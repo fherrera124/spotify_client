@@ -42,20 +42,25 @@ void app_main(void)
     xEventGroupSetBits(event_group, ENABLE_PLAYER);
 
     EventBits_t uxBits;
+    uint32_t    mask = PLAYER_FIRST_EVENT | NO_PLAYER_ACTIVE_EVENT | PLAYER_STATE_CHANGED | DEVICE_STATE_CHANGED | ERROR_EVENT;
     while (1) {
         uxBits = xEventGroupWaitBits(
             event_group,
-            PLAYER_STATE_CHANGED | DEVICE_STATE_CHANGED,
+            mask,
             pdTRUE,
             pdFALSE,
             portMAX_DELAY);
 
-        if (uxBits & PLAYER_STATE_CHANGED) {
+        if (uxBits & PLAYER_FIRST_EVENT) {
+            ESP_LOGI(TAG, "Event: PLAYER_FIRST_EVENT");
+        } else if (uxBits & NO_PLAYER_ACTIVE_EVENT) {
+            ESP_LOGI(TAG, "Event: NO_PLAYER_ACTIVE_EVENT");
+        } else if (uxBits & PLAYER_STATE_CHANGED) {
             ESP_LOGI(TAG, "Event: PLAYER_STATE_CHANGED");
         } else if (uxBits & DEVICE_STATE_CHANGED) {
             ESP_LOGI(TAG, "Event: DEVICE_STATE_CHANGED");
+        } else if (uxBits & ERROR_EVENT) {
+            ESP_LOGI(TAG, "Event: ERROR_EVENT");
         }
-        // release the buffer
-        // xEventGroupClearBits(event_group, (1 << 6));
     }
 }

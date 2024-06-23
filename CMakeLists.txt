@@ -6,5 +6,5 @@ idf_component_register(SRCS "spotify_client.c"
     "lib/strlib.c"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "src/include" "lib/include"
-    PRIV_REQUIRES esp_http_client
+    REQUIRES esp_http_client
     EMBED_TXTFILES certs.pem)

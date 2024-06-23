@@ -281,7 +281,7 @@ static void onExpiresIn(const char* js, jsmntok_t* root, void* obj)
     token->expiresIn = time(0) + seconds;
 }
 
-void parseConnectionId(const char* js, char** str)
+void parseConnectionId(const char* js, char** data)
 {
 
     jsmn_parser jsmn;
@@ -297,24 +297,24 @@ void parseConnectionId(const char* js, char** str)
     jsmntok_t* value = object_get_member(js, tokens, "headers");
 
     if (!value) {
-        *str = NULL;
+        *data = NULL;
         return;
     }
 
     value = object_get_member(js, value, "Spotify-Connection-Id");
     if (!value) {
-        *str = NULL;
+        *data = NULL;
         return;
     }
 
-    *str = jsmn_obj_dup(js, value);
+    *data = jsmn_obj_dup(js, value);
 }
 
-uint32_t parseWebsocketEvent(const char* js, char** str)
+uint32_t parseWebsocketEvent(const char* js, char** data)
 {
 
 
-    *str = NULL;
+    *data = NULL;
 
     jsmn_parser jsmn;
     jsmn_init(&jsmn);

@@ -1,10 +1,14 @@
+#include "esp_http_client.h"
 #include <portmacro.h>
 
 /* Exported macro ------------------------------------------------------------*/
-#define ENABLE_PLAYER        (1 << 0)
-#define DISABLE_PLAYER       (1 << 1)
-#define DEVICE_STATE_CHANGED (1 << 4)
-#define PLAYER_STATE_CHANGED (1 << 5)
+#define ENABLE_PLAYER          (1 << 0)
+#define DISABLE_PLAYER         (1 << 1)
+#define DEVICE_STATE_CHANGED   (1 << 4)
+#define PLAYER_STATE_CHANGED   (1 << 5)
+#define PLAYER_FIRST_EVENT     (1 << 7)
+#define NO_PLAYER_ACTIVE_EVENT (1 << 8)
+#define ERROR_EVENT            (1 << 9)
 
 /* Exported types ------------------------------------------------------------*/
 typedef enum {
@@ -57,6 +61,6 @@ typedef struct
 /* Exported functions prototypes ---------------------------------------------*/
 esp_err_t spotify_client_init(UBaseType_t priority, EventGroupHandle_t* event_group_ptr);
 
-void player_cmd(Player_cmd_t event, void* payload);
+HttpStatus_Code player_cmd(Player_cmd_t event, void* payload);
 
 void http_play_context_uri(const char* uri);

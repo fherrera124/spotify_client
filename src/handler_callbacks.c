@@ -1,16 +1,13 @@
 /* Includes ------------------------------------------------------------------*/
-#include <stdio.h>
-#include <string.h>
-
+#include "handler_callbacks.h"
 #include "esp_log.h"
 #include "esp_tls.h"
+#include "esp_websocket_client.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-
-#include "esp_http_client.h"
-#include "esp_websocket_client.h"
 #include "spotify_client_priv.h"
-#include "handler_callbacks.h"
+#include <stdio.h>
+#include <string.h>
 
 /* Private macro -------------------------------------------------------------*/
 
@@ -67,7 +64,7 @@ void default_ws_event_handler(void* handler_args, esp_event_base_t base, int32_t
 
     handler_args_t* args = (handler_args_t*)handler_args;
 
-    char*        buffer = args->buffer;
+    char*               buffer = args->buffer;
     EventGroupHandle_t* event_group = args->event_group;
 
     ESP_LOGD(TAG, "event_group: '%p'", event_group);
@@ -180,7 +177,7 @@ void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
                     if (brace_count == 0) {
                         // End of playlist
                         http_buffer[output_len] = '\0';
-                        //parse_playlist(http_buffer);
+                        // parse_playlist(http_buffer);
                         output_len = 0;
                     }
                 }
@@ -188,12 +185,12 @@ void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
         }
         break;
     case HTTP_EVENT_ON_FINISH:
-        //err ? NOTIFY_DISPLAY(PLAYLISTS_ERROR) : NOTIFY_DISPLAY(PLAYLISTS_OK);
+        // err ? NOTIFY_DISPLAY(PLAYLISTS_ERROR) : NOTIFY_DISPLAY(PLAYLISTS_OK);
         output_len = in_items = brace_count = err = 0;
         break;
     case HTTP_EVENT_DISCONNECTED:
         output_len = in_items = brace_count = err = 0;
-        //NOTIFY_DISPLAY(PLAYLISTS_ERROR);
+        // NOTIFY_DISPLAY(PLAYLISTS_ERROR);
         break;
     default:
         break;
