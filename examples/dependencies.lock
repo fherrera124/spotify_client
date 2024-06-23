@@ -1,0 +1,27 @@
+dependencies:
+  espressif/esp_websocket_client:
+    component_hash: ae561d39222a399ddda5e470913c3d54a3c0f53dce15b8d21a3aaa4226dd74b1
+    source:
+      service_url: https://api.components.espressif.com/
+      type: service
+    version: 1.2.3
+  idf:
+    component_hash: null
+    source:
+      type: idf
+    version: 5.2.2
+  protocol_examples_common:
+    component_hash: null
+    source:
+      path: C:\Users\franh\esp\v5.2.2\esp-idf\examples\common_components\protocol_examples_common
+      type: local
+    version: '*'
+  spotify_client:
+    component_hash: null
+    source:
+      path: C:\Users\franh\source\repos\spotify_client
+      type: local
+    version: '*'
+manifest_hash: 174749d38febe2a14fdbbbd5ca64e4019187c656b6464afbf1e6a9b44c8d7dcb
+target: esp32
+version: 1.0.0
