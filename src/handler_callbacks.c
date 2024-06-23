@@ -89,7 +89,6 @@ void default_ws_event_handler(void* handler_args, esp_event_base_t base, int32_t
             break;
         }
 
-        // Si es un nuevo mensaje, reinicia el buffer
         if (data->op_code == 0x1 || data->op_code == 0x2) {
 
             EventBits_t uxBits = xEventGroupGetBits(*event_group);

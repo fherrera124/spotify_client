@@ -415,7 +415,7 @@ static esp_err_t get_access_token()
 
     s_state.handler_cb = default_http_event_handler;
     s_state.method = HTTP_METHOD_GET;
-    s_state.endpoint = "https://discord.com/api/v8/users/@me/connections/spotify/elganzua124/access-token";
+    s_state.endpoint = ACCESS_TOKEN_ENDPOINT;
 
     PREPARE_CLIENT(s_state, DISCORD_TOKEN, "application/json");
 
