@@ -170,8 +170,8 @@ HttpStatus_Code player_cmd(Player_cmd_t cmd, void* payload)
         return 999;
     }
 
+    ACQUIRE_LOCK(http_client_lock);
     s_state.handler_cb = default_http_event_handler;
-
     PREPARE_CLIENT(s_state, s_state.token.value, "application/json");
 retry:
     ESP_LOGD(TAG, "Endpoint to send: %s", s_state.endpoint);
@@ -183,11 +183,6 @@ retry:
         s_retries = 0;
         ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", s_state.status_code, length);
         ESP_LOGD(TAG, "%s", http_buffer);
-
-        /* if (s_state.status_code == 401) { // bad token or expired
-                        ESP_LOGW(TAG, "Token expired, getting a new one");
-                        // TODO: handle this situation (maybe it's not necessary)
-                    } */
 
         /* If for any reason, we dont have the actual state
          * of the player, then when sending play command when
@@ -206,6 +201,7 @@ retry:
         handle_err_connection();
         goto retry;
     }
+    RELEASE_LOCK(http_client_lock);
     return s_state.status_code;
 }
 
@@ -262,10 +258,8 @@ static void player_task(void* pvParameters)
 
             if ((uxBits & ENABLE_PLAYER) || (uxBits & WS_DISCONNECT_EVENT)) {
 
-                ACQUIRE_LOCK(http_client_lock);
                 if (get_access_token() != HttpStatus_Ok) {
                     ESP_LOGE(TAG, "Error trying to get an access token");
-                    RELEASE_LOCK(http_client_lock);
                     break;
                 }
 
@@ -288,11 +282,10 @@ static void player_task(void* pvParameters)
 
                 if (data) {
                     ESP_LOGD(TAG, "Connection id: '%s'", data);
-                    ACQUIRE_LOCK(http_client_lock);
+
                     if (confirm_ws_session(data) != HttpStatus_Ok) {
                         ESP_LOGE(TAG, "Error trying to confirm ws session");
                         xEventGroupSetBits(*event_group, ERROR_EVENT);
-                        RELEASE_LOCK(http_client_lock);
                         break;
                     }
 
@@ -308,7 +301,6 @@ static void player_task(void* pvParameters)
                     } else {
                         ESP_LOGE(TAG, "Error trying to get player state");
                         xEventGroupSetBits(*event_group, ERROR_EVENT);
-                        RELEASE_LOCK(http_client_lock);
                         break;
                     }
 
@@ -334,16 +326,11 @@ static void player_task(void* pvParameters)
 
 HttpStatus_Code confirm_ws_session(char* conn_id)
 {
-    /* http_client_lock must be acquired first */
+    ACQUIRE_LOCK(http_client_lock);
     s_state.handler_cb = default_http_event_handler;
     s_state.method = HTTP_METHOD_PUT;
-
     char* url = http_utils_join_string("https://api.spotify.com/v1/me/notifications/player?connection_id=", 0, conn_id, 0);
-
-    s_state.endpoint = url;
-
-    // esp_http_client_set_url(s_state.client, url);
-
+    s_state.endpoint = url; // esp_http_client_set_url(s_state.client, url);
     PREPARE_CLIENT(s_state, s_state.token.value, "application/json");
 
 retry:
@@ -359,6 +346,7 @@ retry:
     }
     free(conn_id);
     free(url);
+    RELEASE_LOCK(http_client_lock);
     return s_state.status_code;
 }
 
@@ -407,11 +395,10 @@ static inline void debug_mem()
 
 static HttpStatus_Code get_access_token()
 {
-    /* http_client_lock must be acquired first */
+    ACQUIRE_LOCK(http_client_lock);
     s_state.handler_cb = default_http_event_handler;
     s_state.method = HTTP_METHOD_GET;
     s_state.endpoint = ACCESS_TOKEN_ENDPOINT;
-
     PREPARE_CLIENT(s_state, DISCORD_TOKEN, "application/json");
 
 retry:
@@ -425,10 +412,10 @@ retry:
         handle_err_connection();
         goto retry;
     }
-
     if (s_state.status_code == HttpStatus_Ok) {
         parseAccessToken(http_buffer, &s_state.token);
         ESP_LOGD(TAG, "Access Token obtained:\n%s", &s_state.token.value[7]);
     }
+    RELEASE_LOCK(http_client_lock);
     return s_state.status_code;
 }
