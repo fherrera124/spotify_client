@@ -54,7 +54,7 @@ typedef struct {
 
 /* Locally scoped variables --------------------------------------------------*/
 static const char*       TAG = "spotify_client";
-EventGroupHandle_t*      event_group;
+EventGroupHandle_t       event_group;
 static char              http_buffer[MAX_HTTP_BUFFER];
 static char              websocket_buffer[4096];
 static char              sprintf_buf[SPRINTF_BUF_SIZE];
@@ -124,13 +124,13 @@ esp_err_t spotify_client_init(UBaseType_t priority, EventGroupHandle_t* event_gr
 
     init_functions_cb();
 
-    event_group = event_group_ptr;
-    *event_group = xEventGroupCreate();
+    event_group = xEventGroupCreate();
 
-    if (!(*event_group)) {
+    if (!event_group) {
         ESP_LOGE("EventGroup", "Failed to create event group");
         return ESP_FAIL;
     }
+    *event_group_ptr = event_group;
 
     int res = xTaskCreate(player_task, "player_task", 4096, NULL, priority, NULL);
     if (!res) {
@@ -246,15 +246,12 @@ static void player_task(void* pvParameters)
 
         while (1) {
 
-            ESP_LOGD(TAG, "event_group: '%p'", event_group);
-
             uxBits = xEventGroupWaitBits(
-                *event_group, // Grupo de eventos
-                ENABLE_PLAYER | DISABLE_PLAYER | WS_DATA_EVENT | WS_DISCONNECT_EVENT, // Bits a esperar
-                pdTRUE, // Limpiar las bits al salir
-                pdFALSE, // Esperar todos las bits o cualquiera
-                portMAX_DELAY // Esperar indefinidamente
-            );
+                event_group,
+                ENABLE_PLAYER | DISABLE_PLAYER | WS_DATA_EVENT | WS_DISCONNECT_EVENT,
+                pdTRUE,
+                pdFALSE,
+                portMAX_DELAY);
 
             if ((uxBits & ENABLE_PLAYER) || (uxBits & WS_DISCONNECT_EVENT)) {
 
@@ -285,7 +282,7 @@ static void player_task(void* pvParameters)
 
                     if (confirm_ws_session(data) != HttpStatus_Ok) {
                         ESP_LOGE(TAG, "Error trying to confirm ws session");
-                        xEventGroupSetBits(*event_group, ERROR_EVENT);
+                        xEventGroupSetBits(event_group, ERROR_EVENT);
                         break;
                     }
 
@@ -293,14 +290,14 @@ static void player_task(void* pvParameters)
                     if (status_code == HttpStatus_Ok) {
                         // there is a device atached to playback,
                         // fire as a first event
-                        xEventGroupSetBits(*event_group, PLAYER_FIRST_EVENT);
+                        xEventGroupSetBits(event_group, PLAYER_FIRST_EVENT);
                     } else if (status_code == 204) {
                         // no device is atached to playback,
                         // fire an event of no device playing
-                        xEventGroupSetBits(*event_group, NO_PLAYER_ACTIVE_EVENT);
+                        xEventGroupSetBits(event_group, NO_PLAYER_ACTIVE_EVENT);
                     } else {
                         ESP_LOGE(TAG, "Error trying to get player state");
-                        xEventGroupSetBits(*event_group, ERROR_EVENT);
+                        xEventGroupSetBits(event_group, ERROR_EVENT);
                         break;
                     }
 
@@ -309,10 +306,10 @@ static void player_task(void* pvParameters)
 
                     switch (evt) {
                     case PLAYER_STATE_CHANGED:
-                        xEventGroupSetBits(*event_group, PLAYER_STATE_CHANGED);
+                        xEventGroupSetBits(event_group, PLAYER_STATE_CHANGED);
                         break;
                     case DEVICE_STATE_CHANGED:
-                        xEventGroupSetBits(*event_group, DEVICE_STATE_CHANGED);
+                        xEventGroupSetBits(event_group, DEVICE_STATE_CHANGED);
                         break;
                     default:
                         ESP_LOGW(TAG, "Unhandled event: '%lu'", evt);

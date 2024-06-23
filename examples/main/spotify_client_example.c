@@ -38,11 +38,10 @@ void app_main(void)
      */
     ESP_ERROR_CHECK(example_connect());
     ESP_ERROR_CHECK(spotify_client_init(5, &event_group));
-    ESP_LOGW(TAG, "event_group: '%p'", &event_group);
-    xEventGroupSetBits(event_group, ENABLE_PLAYER);
 
     EventBits_t uxBits;
     uint32_t    mask = PLAYER_FIRST_EVENT | NO_PLAYER_ACTIVE_EVENT | PLAYER_STATE_CHANGED | DEVICE_STATE_CHANGED | ERROR_EVENT;
+    xEventGroupSetBits(event_group, ENABLE_PLAYER);
     while (1) {
         uxBits = xEventGroupWaitBits(
             event_group,

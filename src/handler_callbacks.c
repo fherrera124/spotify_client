@@ -65,9 +65,7 @@ void default_ws_event_handler(void* handler_args, esp_event_base_t base, int32_t
     handler_args_t* args = (handler_args_t*)handler_args;
 
     char*               buffer = args->buffer;
-    EventGroupHandle_t* event_group = args->event_group;
-
-    ESP_LOGD(TAG, "event_group: '%p'", event_group);
+    EventGroupHandle_t event_group = args->event_group;
 
     esp_websocket_event_data_t* data = (esp_websocket_event_data_t*)event_data;
 
@@ -77,7 +75,7 @@ void default_ws_event_handler(void* handler_args, esp_event_base_t base, int32_t
         break;
     case WEBSOCKET_EVENT_DISCONNECTED:
         ESP_LOGD(TAG, "WebSocket Disconnected");
-        xEventGroupSetBits(*event_group, WS_DISCONNECT_EVENT);
+        xEventGroupSetBits(event_group, WS_DISCONNECT_EVENT);
         break;
     case WEBSOCKET_EVENT_DATA:
         ESP_LOGD(TAG, "WebSocket Data Received: Opcode=%d, Length=%d", data->op_code, data->data_len);
@@ -87,13 +85,6 @@ void default_ws_event_handler(void* handler_args, esp_event_base_t base, int32_t
         }
 
         if (data->op_code == 0x1 || data->op_code == 0x2) {
-
-            EventBits_t uxBits = xEventGroupGetBits(*event_group);
-
-            /* if (!(uxBits & BUFFER_CONSUMED)) {
-                ESP_LOGW(TAG, "Buffer is bussy, discarding incoming data");
-                break;
-            } */
 
             // validamos previamente si el total de todo entrara en nuestro buffer
             if ((data->payload_len) + 1 > MAX_HTTP_BUFFER) {
@@ -114,7 +105,7 @@ void default_ws_event_handler(void* handler_args, esp_event_base_t base, int32_t
             buffer[data->payload_len] = 0;
             ESP_LOGD(TAG, "%s", buffer);
 
-            xEventGroupSetBits(*event_group, WS_DATA_EVENT);
+            xEventGroupSetBits(event_group, WS_DATA_EVENT);
         }
 
         break;
