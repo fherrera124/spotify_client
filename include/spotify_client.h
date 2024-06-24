@@ -59,8 +59,6 @@ typedef struct
 } TrackInfo; */
 
 /* Exported functions prototypes ---------------------------------------------*/
-esp_err_t spotify_client_init(UBaseType_t priority, EventGroupHandle_t* event_group_ptr);
-
+esp_err_t       spotify_client_init(UBaseType_t priority, EventGroupHandle_t* event_group_ptr);
 HttpStatus_Code player_cmd(Player_cmd_t event, void* payload);
-
-void http_play_context_uri(const char* uri);
+HttpStatus_Code http_play_context_uri(const char* uri);

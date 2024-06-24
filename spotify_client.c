@@ -44,8 +44,6 @@ typedef void (*handler_cb_t)(char*, esp_http_client_event_t*);
 typedef struct {
     AccessToken                   token; /*!<*/
     const char*                   endpoint; /*!<*/
-    HttpStatus_Code               status_code; /*!<*/
-    esp_err_t                     err; /*!<*/
     esp_http_client_method_t      method; /*!<*/
     esp_http_client_handle_t      client; /*!<*/
     esp_websocket_client_handle_t ws_client;
@@ -175,19 +173,18 @@ HttpStatus_Code player_cmd(Player_cmd_t cmd, void* payload)
     PREPARE_CLIENT(s_state, s_state.token.value, "application/json");
 retry:
     ESP_LOGD(TAG, "Endpoint to send: %s", s_state.endpoint);
-    s_state.err = esp_http_client_perform(s_state.client);
-    s_state.status_code = esp_http_client_get_status_code(s_state.client);
-    int length = esp_http_client_get_content_length(s_state.client);
-
-    if (s_state.err == ESP_OK) {
+    esp_err_t err = esp_http_client_perform(s_state.client);
+    if (err == ESP_OK) {
         s_retries = 0;
-        ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", s_state.status_code, length);
+        HttpStatus_Code status_code = esp_http_client_get_status_code(s_state.client);
+        int             length = esp_http_client_get_content_length(s_state.client);
+        ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", status_code, length);
         ESP_LOGD(TAG, "%s", http_buffer);
 
         /* If for any reason, we dont have the actual state
          * of the player, then when sending play command when
          * paused, or viceversa, we receive error 403. */
-        if (s_state.status_code == HttpStatus_Forbidden) {
+        if (status_code == HttpStatus_Forbidden) {
             if (cmd == PLAY) {
                 s_state.endpoint = PLAYERURL(PAUSE_TRACK);
             } else if (cmd == PAUSE) {
@@ -196,16 +193,15 @@ retry:
             esp_http_client_set_url(s_state.client, s_state.endpoint);
             goto retry; // add max number of retries maybe
         }
-
+        RELEASE_LOCK(http_client_lock);
+        return status_code;
     } else {
-        handle_err_connection();
+        handle_err_connection(err);
         goto retry;
     }
-    RELEASE_LOCK(http_client_lock);
-    return s_state.status_code;
 }
 
-void http_play_context_uri(const char* uri)
+HttpStatus_Code http_play_context_uri(const char* uri)
 {
     ACQUIRE_LOCK(http_client_lock);
     int str_len = sprintf(sprintf_buf, "{\"context_uri\":\"%s\"}", uri);
@@ -217,15 +213,22 @@ void http_play_context_uri(const char* uri)
 
     esp_http_client_set_post_field(s_state.client, sprintf_buf, str_len);
     PREPARE_CLIENT(s_state, s_state.token.value, "application/json");
+retry:
     ESP_LOGD(TAG, "Endpoint to send: %s", s_state.endpoint);
-    s_state.err = esp_http_client_perform(s_state.client);
-    s_state.status_code = esp_http_client_get_status_code(s_state.client);
-    int length = esp_http_client_get_content_length(s_state.client);
-    ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", s_state.status_code, length);
-    ESP_LOGD(TAG, "%s", http_buffer);
-    // TODO: validate status_code
-    esp_http_client_set_post_field(s_state.client, NULL, 0);
-    RELEASE_LOCK(http_client_lock);
+    esp_err_t       err = esp_http_client_perform(s_state.client);
+    HttpStatus_Code status_code = esp_http_client_get_status_code(s_state.client);
+    if (err == ESP_OK) {
+        s_retries = 0;
+        int length = esp_http_client_get_content_length(s_state.client);
+        ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", status_code, length);
+        ESP_LOGD(TAG, "%s", http_buffer);
+        esp_http_client_set_post_field(s_state.client, NULL, 0);
+        RELEASE_LOCK(http_client_lock);
+        return status_code;
+    } else {
+        handle_err_connection(err);
+        goto retry;
+    }
 }
 
 /* Private functions ---------------------------------------------------------*/
@@ -274,7 +277,6 @@ static void player_task(void* pvParameters)
                 // analize data of ws event
 
                 char* data = NULL;
-
                 parseConnectionId(websocket_buffer, &data);
 
                 if (data) {
@@ -332,26 +334,27 @@ HttpStatus_Code confirm_ws_session(char* conn_id)
 
 retry:
     ESP_LOGD(TAG, "Endpoint to send: %s", s_state.endpoint);
-    s_state.err = esp_http_client_perform(s_state.client);
-    s_state.status_code = esp_http_client_get_status_code(s_state.client);
-    int length = esp_http_client_get_content_length(s_state.client);
-    ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", s_state.status_code, length);
-
-    if (s_state.err != ESP_OK) {
-        handle_err_connection();
+    esp_err_t err = esp_http_client_perform(s_state.client);
+    if (err == ESP_OK) {
+        s_retries = 0;
+        HttpStatus_Code status_code = esp_http_client_get_status_code(s_state.client);
+        int             length = esp_http_client_get_content_length(s_state.client);
+        ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", status_code, length);
+        free(conn_id);
+        free(url);
+        RELEASE_LOCK(http_client_lock);
+        return status_code;
+    } else {
+        handle_err_connection(err);
         goto retry;
     }
-    free(conn_id);
-    free(url);
-    RELEASE_LOCK(http_client_lock);
-    return s_state.status_code;
 }
 
-static inline void handle_err_connection()
+static inline void handle_err_connection(esp_err_t err)
 {
     ESP_LOGE(TAG, "HTTP %s request failed: %s",
         HTTP_METHOD_LOOKUP[s_state.method],
-        esp_err_to_name(s_state.err));
+        esp_err_to_name(err));
     assert((++s_retries <= RETRIES_ERR_CONN) && "Restarting...");
     vTaskDelay(pdMS_TO_TICKS(1000));
     ESP_LOGW(TAG, "Retrying %d/%d...", s_retries, RETRIES_ERR_CONN);
@@ -400,19 +403,20 @@ static HttpStatus_Code get_access_token()
 
 retry:
     ESP_LOGD(TAG, "Endpoint to send: %s", s_state.endpoint);
-    s_state.err = esp_http_client_perform(s_state.client);
-    s_state.status_code = esp_http_client_get_status_code(s_state.client);
-    esp_http_client_set_post_field(s_state.client, NULL, 0); /* Clear post field */
-    int length = esp_http_client_get_content_length(s_state.client);
-    ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", s_state.status_code, length);
-    if (s_state.err != ESP_OK) {
-        handle_err_connection();
+    esp_err_t err = esp_http_client_perform(s_state.client);
+    if (err == ESP_OK) {
+        s_retries = 0;
+        HttpStatus_Code status_code = esp_http_client_get_status_code(s_state.client);
+        int             length = esp_http_client_get_content_length(s_state.client);
+        ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", status_code, length);
+        if (status_code == HttpStatus_Ok) {
+            parseAccessToken(http_buffer, &s_state.token);
+            ESP_LOGD(TAG, "Access Token obtained:\n%s", &s_state.token.value[7]);
+        }
+        RELEASE_LOCK(http_client_lock);
+        return status_code;
+    } else {
+        handle_err_connection(err);
         goto retry;
     }
-    if (s_state.status_code == HttpStatus_Ok) {
-        parseAccessToken(http_buffer, &s_state.token);
-        ESP_LOGD(TAG, "Access Token obtained:\n%s", &s_state.token.value[7]);
-    }
-    RELEASE_LOCK(http_client_lock);
-    return s_state.status_code;
 }
