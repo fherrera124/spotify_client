@@ -236,90 +236,82 @@ retry:
 
 static void player_task(void* pvParameters)
 {
-    TrackInfo* new_track = &(TrackInfo) { 0 };
-    CALLOC(new_track->name, 1);
-
+    handler_args_t handler_args = {
+        .buffer = websocket_buffer,
+        .event_group = event_group
+    };
     EventBits_t uxBits;
 
     while (1) {
+        uxBits = xEventGroupWaitBits(
+            event_group,
+            ENABLE_PLAYER | DISABLE_PLAYER | WS_DATA_EVENT | WS_DISCONNECT_EVENT,
+            pdTRUE,
+            pdFALSE,
+            portMAX_DELAY);
 
-        handler_args_t handler_args = {
-            .buffer = websocket_buffer,
-            .event_group = event_group
-        };
+        if ((uxBits & ENABLE_PLAYER) || (uxBits & WS_DISCONNECT_EVENT)) {
 
-        while (1) {
+            if (get_access_token() != HttpStatus_Ok) {
+                ESP_LOGE(TAG, "Error trying to get an access token");
+                xEventGroupSetBits(event_group, ERROR_EVENT);
+                break;
+            }
 
-            uxBits = xEventGroupWaitBits(
-                event_group,
-                ENABLE_PLAYER | DISABLE_PLAYER | WS_DATA_EVENT | WS_DISCONNECT_EVENT,
-                pdTRUE,
-                pdFALSE,
-                portMAX_DELAY);
+            // initial state
+            HttpStatus_Code status_code = player_cmd(GET_STATE, NULL);
+            if (status_code == HttpStatus_Ok) {
+                // there is a device atached to playback,
+                // fire as a first event
+                xEventGroupSetBits(event_group, PLAYER_FIRST_EVENT);
+            } else if (status_code == 204) {
+                // no device is atached to playback,
+                // fire an event of no device playing
+                xEventGroupSetBits(event_group, NO_PLAYER_ACTIVE_EVENT);
+            } else {
+                ESP_LOGE(TAG, "Error trying to get player state");
+                xEventGroupSetBits(event_group, ERROR_EVENT);
+                break;
+            }
 
-            if ((uxBits & ENABLE_PLAYER) || (uxBits & WS_DISCONNECT_EVENT)) {
+            // start the ws session
+            char* uri = http_utils_join_string("wss://dealer.spotify.com/?access_token=", 0, http_client.token.value + 7, strlen(http_client.token.value) - 7);
+            esp_websocket_client_set_uri(ws_client_handle, uri);
+            free(uri);
+            esp_websocket_register_events(ws_client_handle, WEBSOCKET_EVENT_ANY, default_ws_event_handler, &handler_args);
+            esp_websocket_client_start(ws_client_handle);
 
-                if (get_access_token() != HttpStatus_Ok) {
-                    ESP_LOGE(TAG, "Error trying to get an access token");
+        } else if (uxBits & DISABLE_PLAYER) {
+            esp_websocket_client_close(ws_client_handle, portMAX_DELAY);
+
+        } else if (uxBits & WS_DATA_EVENT) {
+
+            // analize data of ws event
+
+            char* data = NULL;
+            parseConnectionId(websocket_buffer, &data);
+
+            if (data) {
+                ESP_LOGD(TAG, "Connection id: '%s'", data);
+
+                if (confirm_ws_session(data) != HttpStatus_Ok) {
+                    ESP_LOGE(TAG, "Error trying to confirm ws session");
                     xEventGroupSetBits(event_group, ERROR_EVENT);
                     break;
                 }
+            } else {
+                uint32_t evt = parseWebsocketEvent(websocket_buffer, &data);
 
-                // initial state
-                HttpStatus_Code status_code = player_cmd(GET_STATE, NULL);
-                if (status_code == HttpStatus_Ok) {
-                    // there is a device atached to playback,
-                    // fire as a first event
-                    xEventGroupSetBits(event_group, PLAYER_FIRST_EVENT);
-                } else if (status_code == 204) {
-                    // no device is atached to playback,
-                    // fire an event of no device playing
-                    xEventGroupSetBits(event_group, NO_PLAYER_ACTIVE_EVENT);
-                } else {
-                    ESP_LOGE(TAG, "Error trying to get player state");
-                    xEventGroupSetBits(event_group, ERROR_EVENT);
+                switch (evt) {
+                case PLAYER_STATE_CHANGED:
+                    xEventGroupSetBits(event_group, PLAYER_STATE_CHANGED);
                     break;
-                }
-
-                // start the ws session
-                char* uri = http_utils_join_string("wss://dealer.spotify.com/?access_token=", 0, http_client.token.value + 7, strlen(http_client.token.value) - 7);
-                esp_websocket_client_set_uri(ws_client_handle, uri);
-                free(uri);
-                esp_websocket_register_events(ws_client_handle, WEBSOCKET_EVENT_ANY, default_ws_event_handler, &handler_args);
-                esp_websocket_client_start(ws_client_handle);
-
-            } else if (uxBits & DISABLE_PLAYER) {
-                esp_websocket_client_close(ws_client_handle, portMAX_DELAY);
-
-            } else if (uxBits & WS_DATA_EVENT) {
-
-                // analize data of ws event
-
-                char* data = NULL;
-                parseConnectionId(websocket_buffer, &data);
-
-                if (data) {
-                    ESP_LOGD(TAG, "Connection id: '%s'", data);
-
-                    if (confirm_ws_session(data) != HttpStatus_Ok) {
-                        ESP_LOGE(TAG, "Error trying to confirm ws session");
-                        xEventGroupSetBits(event_group, ERROR_EVENT);
-                        break;
-                    }
-                } else {
-                    uint32_t evt = parseWebsocketEvent(websocket_buffer, &data);
-
-                    switch (evt) {
-                    case PLAYER_STATE_CHANGED:
-                        xEventGroupSetBits(event_group, PLAYER_STATE_CHANGED);
-                        break;
-                    case DEVICE_STATE_CHANGED:
-                        xEventGroupSetBits(event_group, DEVICE_STATE_CHANGED);
-                        break;
-                    default:
-                        ESP_LOGW(TAG, "Unhandled event: '%lu'", evt);
-                        break;
-                    }
+                case DEVICE_STATE_CHANGED:
+                    xEventGroupSetBits(event_group, DEVICE_STATE_CHANGED);
+                    break;
+                default:
+                    ESP_LOGW(TAG, "Unhandled event: '%lu'", evt);
+                    break;
                 }
             }
         }
