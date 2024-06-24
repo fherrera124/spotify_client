@@ -13,6 +13,7 @@
 #include "string_utils.h"
 
 /* Private macro -------------------------------------------------------------*/
+#define ACCESS_TOKEN_URL    "https://discord.com/api/v8/users/@me/connections/spotify/" SPOTIFY_UID "/access-token"
 #define PLAYER              "/me/player"
 #define TOKEN_URL           "https://accounts.spotify.com/api/token"
 #define PLAYING             PLAYER "?market=AR&additional_types=episode"
@@ -27,11 +28,11 @@
 #define RETRIES_ERR_CONN    3
 #define SPRINTF_BUF_SIZE    100
 
-#define PREPARE_CLIENT(state, AUTH, TYPE)                              \
-    esp_http_client_set_url(s_state.client, s_state.endpoint);         \
-    esp_http_client_set_method(s_state.client, s_state.method);        \
-    esp_http_client_set_header(s_state.client, "Authorization", AUTH); \
-    esp_http_client_set_header(s_state.client, "Content-Type", TYPE)
+#define PREPARE_CLIENT(state, AUTH, TYPE)                                  \
+    esp_http_client_set_url(http_client.handle, http_client.endpoint);     \
+    esp_http_client_set_method(http_client.handle, http_client.method);    \
+    esp_http_client_set_header(http_client.handle, "Authorization", AUTH); \
+    esp_http_client_set_header(http_client.handle, "Content-Type", TYPE)
 
 /* DRY macros */
 #define CALLOC(var, size)  \
@@ -42,24 +43,24 @@
 typedef void (*handler_cb_t)(char*, esp_http_client_event_t*);
 
 typedef struct {
-    AccessToken                   token; /*!<*/
-    const char*                   endpoint; /*!<*/
-    esp_http_client_method_t      method; /*!<*/
-    esp_http_client_handle_t      client; /*!<*/
-    esp_websocket_client_handle_t ws_client;
-    handler_cb_t                  handler_cb; /*!< Callback function to handle http events */
-} Client_state_t;
+    esp_http_client_handle_t handle; /*!<*/
+    AccessToken              token; /*!<*/
+    const char*              endpoint; /*!<*/
+    esp_http_client_method_t method; /*!<*/
+    handler_cb_t             handler_cb; /*!< Callback function to handle http events */
+} HttpClient_data_t;
 
 /* Locally scoped variables --------------------------------------------------*/
-static const char*       TAG = "spotify_client";
-EventGroupHandle_t       event_group;
-static char              http_buffer[MAX_HTTP_BUFFER];
-static char              websocket_buffer[4096];
-static char              sprintf_buf[SPRINTF_BUF_SIZE];
-static SemaphoreHandle_t http_client_lock = NULL; /* Mutex to manage access to the http client handle */
-static uint8_t           s_retries = 0; /* number of retries on error connections */
-static Client_state_t    s_state = { .token.value = { 'B', 'e', 'a', 'r', 'e', 'r', ' ', '\0' } };
-static const char*       HTTP_METHOD_LOOKUP[] = { "GET", "POST", "PUT" };
+static const char*            TAG = "spotify_client";
+EventGroupHandle_t            event_group;
+static char                   http_buffer[MAX_HTTP_BUFFER];
+static char                   websocket_buffer[4096];
+static char                   sprintf_buf[SPRINTF_BUF_SIZE];
+static SemaphoreHandle_t      http_client_lock = NULL; /* Mutex to manage access to the http client handle */
+static uint8_t                s_retries = 0; /* number of retries on error connections */
+static HttpClient_data_t      http_client = { .token.value = { 'B', 'e', 'a', 'r', 'e', 'r', ' ', '\0' } };
+static const char*            HTTP_METHOD_LOOKUP[] = { "GET", "POST", "PUT" };
+esp_websocket_client_handle_t ws_client;
 
 /* Globally scoped variables definitions -------------------------------------*/
 TrackInfo* TRACK = &(TrackInfo) { 0 }; /* pointer to an unnamed object, constructed in place
@@ -100,14 +101,14 @@ esp_err_t spotify_client_init(UBaseType_t priority, EventGroupHandle_t* event_gr
 
     CALLOC(TRACK->name, 1);
 
-    s_state.client = esp_http_client_init(&http_cfg);
-    if (!s_state.client) {
+    http_client.handle = esp_http_client_init(&http_cfg);
+    if (!http_client.handle) {
         ESP_LOGE(TAG, "Error on esp_http_client_init()");
         return ESP_FAIL;
     }
 
-    s_state.ws_client = esp_websocket_client_init(&websocket_cfg);
-    if (!s_state.ws_client) {
+    ws_client = esp_websocket_client_init(&websocket_cfg);
+    if (!ws_client) {
         ESP_LOGE(TAG, "Error on esp_websocket_client_init()");
         return ESP_FAIL;
     }
@@ -118,7 +119,7 @@ esp_err_t spotify_client_init(UBaseType_t priority, EventGroupHandle_t* event_gr
         return ESP_FAIL;
     }
 
-    s_state.handler_cb = default_http_event_handler;
+    http_client.handler_cb = default_http_event_handler;
 
     init_functions_cb();
 
@@ -142,26 +143,26 @@ HttpStatus_Code player_cmd(Player_cmd_t cmd, void* payload)
 {
     switch (cmd) {
     case PAUSE:
-        s_state.method = HTTP_METHOD_PUT;
-        s_state.endpoint = PLAYERURL(PAUSE_TRACK);
+        http_client.method = HTTP_METHOD_PUT;
+        http_client.endpoint = PLAYERURL(PAUSE_TRACK);
         break;
     case PLAY:
-        s_state.method = HTTP_METHOD_PUT;
-        s_state.endpoint = PLAYERURL(PLAY_TRACK);
+        http_client.method = HTTP_METHOD_PUT;
+        http_client.endpoint = PLAYERURL(PLAY_TRACK);
         break;
     case PREVIOUS:
-        s_state.method = HTTP_METHOD_POST;
-        s_state.endpoint = PLAYERURL(PREV_TRACK);
+        http_client.method = HTTP_METHOD_POST;
+        http_client.endpoint = PLAYERURL(PREV_TRACK);
         break;
     case NEXT:
-        s_state.method = HTTP_METHOD_POST;
-        s_state.endpoint = PLAYERURL(NEXT_TRACK);
+        http_client.method = HTTP_METHOD_POST;
+        http_client.endpoint = PLAYERURL(NEXT_TRACK);
         break;
     case CHANGE_VOLUME:
         break;
     case GET_STATE:
-        s_state.method = HTTP_METHOD_GET;
-        s_state.endpoint = PLAYERURL(PLAYER);
+        http_client.method = HTTP_METHOD_GET;
+        http_client.endpoint = PLAYERURL(PLAYER);
         break;
     default:
         ESP_LOGE(TAG, "Unknow command");
@@ -169,15 +170,15 @@ HttpStatus_Code player_cmd(Player_cmd_t cmd, void* payload)
     }
 
     ACQUIRE_LOCK(http_client_lock);
-    s_state.handler_cb = default_http_event_handler;
-    PREPARE_CLIENT(s_state, s_state.token.value, "application/json");
+    http_client.handler_cb = default_http_event_handler;
+    PREPARE_CLIENT(http_client, http_client.token.value, "application/json");
 retry:
-    ESP_LOGD(TAG, "Endpoint to send: %s", s_state.endpoint);
-    esp_err_t err = esp_http_client_perform(s_state.client);
+    ESP_LOGD(TAG, "Endpoint to send: %s", http_client.endpoint);
+    esp_err_t err = esp_http_client_perform(http_client.handle);
     if (err == ESP_OK) {
         s_retries = 0;
-        HttpStatus_Code status_code = esp_http_client_get_status_code(s_state.client);
-        int             length = esp_http_client_get_content_length(s_state.client);
+        HttpStatus_Code status_code = esp_http_client_get_status_code(http_client.handle);
+        int             length = esp_http_client_get_content_length(http_client.handle);
         ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", status_code, length);
         ESP_LOGD(TAG, "%s", http_buffer);
 
@@ -186,11 +187,11 @@ retry:
          * paused, or viceversa, we receive error 403. */
         if (status_code == HttpStatus_Forbidden) {
             if (cmd == PLAY) {
-                s_state.endpoint = PLAYERURL(PAUSE_TRACK);
+                http_client.endpoint = PLAYERURL(PAUSE_TRACK);
             } else if (cmd == PAUSE) {
-                s_state.endpoint = PLAYERURL(PLAY_TRACK);
+                http_client.endpoint = PLAYERURL(PLAY_TRACK);
             }
-            esp_http_client_set_url(s_state.client, s_state.endpoint);
+            esp_http_client_set_url(http_client.handle, http_client.endpoint);
             goto retry; // add max number of retries maybe
         }
         RELEASE_LOCK(http_client_lock);
@@ -207,22 +208,22 @@ HttpStatus_Code http_play_context_uri(const char* uri)
     int str_len = sprintf(sprintf_buf, "{\"context_uri\":\"%s\"}", uri);
     assert((str_len <= SPRINTF_BUF_SIZE) && "uri too long");
 
-    s_state.handler_cb = default_http_event_handler;
-    s_state.method = HTTP_METHOD_PUT;
-    s_state.endpoint = PLAYERURL(PLAY_TRACK);
+    http_client.handler_cb = default_http_event_handler;
+    http_client.method = HTTP_METHOD_PUT;
+    http_client.endpoint = PLAYERURL(PLAY_TRACK);
 
-    esp_http_client_set_post_field(s_state.client, sprintf_buf, str_len);
-    PREPARE_CLIENT(s_state, s_state.token.value, "application/json");
+    esp_http_client_set_post_field(http_client.handle, sprintf_buf, str_len);
+    PREPARE_CLIENT(http_client, http_client.token.value, "application/json");
 retry:
-    ESP_LOGD(TAG, "Endpoint to send: %s", s_state.endpoint);
-    esp_err_t       err = esp_http_client_perform(s_state.client);
-    HttpStatus_Code status_code = esp_http_client_get_status_code(s_state.client);
+    ESP_LOGD(TAG, "Endpoint to send: %s", http_client.endpoint);
+    esp_err_t       err = esp_http_client_perform(http_client.handle);
+    HttpStatus_Code status_code = esp_http_client_get_status_code(http_client.handle);
     if (err == ESP_OK) {
         s_retries = 0;
-        int length = esp_http_client_get_content_length(s_state.client);
+        int length = esp_http_client_get_content_length(http_client.handle);
         ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", status_code, length);
         ESP_LOGD(TAG, "%s", http_buffer);
-        esp_http_client_set_post_field(s_state.client, NULL, 0);
+        esp_http_client_set_post_field(http_client.handle, NULL, 0);
         RELEASE_LOCK(http_client_lock);
         return status_code;
     } else {
@@ -263,14 +264,14 @@ static void player_task(void* pvParameters)
                     break;
                 }
 
-                char* uri = http_utils_join_string("wss://dealer.spotify.com/?access_token=", 0, s_state.token.value + 7, strlen(s_state.token.value) - 7);
-                esp_websocket_client_set_uri(s_state.ws_client, uri);
+                char* uri = http_utils_join_string("wss://dealer.spotify.com/?access_token=", 0, http_client.token.value + 7, strlen(http_client.token.value) - 7);
+                esp_websocket_client_set_uri(ws_client, uri);
                 free(uri);
-                esp_websocket_register_events(s_state.ws_client, WEBSOCKET_EVENT_ANY, default_ws_event_handler, &handler_args);
-                esp_websocket_client_start(s_state.ws_client);
+                esp_websocket_register_events(ws_client, WEBSOCKET_EVENT_ANY, default_ws_event_handler, &handler_args);
+                esp_websocket_client_start(ws_client);
 
             } else if (uxBits & DISABLE_PLAYER) {
-                esp_websocket_client_close(s_state.ws_client, portMAX_DELAY);
+                esp_websocket_client_close(ws_client, portMAX_DELAY);
 
             } else if (uxBits & WS_DATA_EVENT) {
 
@@ -326,19 +327,19 @@ static void player_task(void* pvParameters)
 HttpStatus_Code confirm_ws_session(char* conn_id)
 {
     ACQUIRE_LOCK(http_client_lock);
-    s_state.handler_cb = default_http_event_handler;
-    s_state.method = HTTP_METHOD_PUT;
+    http_client.handler_cb = default_http_event_handler;
+    http_client.method = HTTP_METHOD_PUT;
     char* url = http_utils_join_string("https://api.spotify.com/v1/me/notifications/player?connection_id=", 0, conn_id, 0);
-    s_state.endpoint = url; // esp_http_client_set_url(s_state.client, url);
-    PREPARE_CLIENT(s_state, s_state.token.value, "application/json");
+    http_client.endpoint = url; // esp_http_client_set_url(http_client.handle, url);
+    PREPARE_CLIENT(http_client, http_client.token.value, "application/json");
 
 retry:
-    ESP_LOGD(TAG, "Endpoint to send: %s", s_state.endpoint);
-    esp_err_t err = esp_http_client_perform(s_state.client);
+    ESP_LOGD(TAG, "Endpoint to send: %s", http_client.endpoint);
+    esp_err_t err = esp_http_client_perform(http_client.handle);
     if (err == ESP_OK) {
         s_retries = 0;
-        HttpStatus_Code status_code = esp_http_client_get_status_code(s_state.client);
-        int             length = esp_http_client_get_content_length(s_state.client);
+        HttpStatus_Code status_code = esp_http_client_get_status_code(http_client.handle);
+        int             length = esp_http_client_get_content_length(http_client.handle);
         ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", status_code, length);
         free(conn_id);
         free(url);
@@ -353,7 +354,7 @@ retry:
 static inline void handle_err_connection(esp_err_t err)
 {
     ESP_LOGE(TAG, "HTTP %s request failed: %s",
-        HTTP_METHOD_LOOKUP[s_state.method],
+        HTTP_METHOD_LOOKUP[http_client.method],
         esp_err_to_name(err));
     assert((++s_retries <= RETRIES_ERR_CONN) && "Restarting...");
     vTaskDelay(pdMS_TO_TICKS(1000));
@@ -363,7 +364,7 @@ static inline void handle_err_connection(esp_err_t err)
 
 static esp_err_t _http_event_handler(esp_http_client_event_t* evt)
 {
-    s_state.handler_cb(http_buffer, evt);
+    http_client.handler_cb(http_buffer, evt);
     return ESP_OK;
 }
 
@@ -396,22 +397,22 @@ static inline void debug_mem()
 static HttpStatus_Code get_access_token()
 {
     ACQUIRE_LOCK(http_client_lock);
-    s_state.handler_cb = default_http_event_handler;
-    s_state.method = HTTP_METHOD_GET;
-    s_state.endpoint = ACCESS_TOKEN_ENDPOINT;
-    PREPARE_CLIENT(s_state, DISCORD_TOKEN, "application/json");
+    http_client.handler_cb = default_http_event_handler;
+    http_client.method = HTTP_METHOD_GET;
+    http_client.endpoint = ACCESS_TOKEN_URL;
+    PREPARE_CLIENT(http_client, DISCORD_TOKEN, "application/json");
 
 retry:
-    ESP_LOGD(TAG, "Endpoint to send: %s", s_state.endpoint);
-    esp_err_t err = esp_http_client_perform(s_state.client);
+    ESP_LOGD(TAG, "Endpoint to send: %s", http_client.endpoint);
+    esp_err_t err = esp_http_client_perform(http_client.handle);
     if (err == ESP_OK) {
         s_retries = 0;
-        HttpStatus_Code status_code = esp_http_client_get_status_code(s_state.client);
-        int             length = esp_http_client_get_content_length(s_state.client);
+        HttpStatus_Code status_code = esp_http_client_get_status_code(http_client.handle);
+        int             length = esp_http_client_get_content_length(http_client.handle);
         ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", status_code, length);
         if (status_code == HttpStatus_Ok) {
-            parseAccessToken(http_buffer, &s_state.token);
-            ESP_LOGD(TAG, "Access Token obtained:\n%s", &s_state.token.value[7]);
+            parseAccessToken(http_buffer, &http_client.token);
+            ESP_LOGD(TAG, "Access Token obtained:\n%s", &http_client.token.value[7]);
         }
         RELEASE_LOCK(http_client_lock);
         return status_code;
