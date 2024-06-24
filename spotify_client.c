@@ -265,6 +265,23 @@ static void player_task(void* pvParameters)
                     break;
                 }
 
+                // initial state
+                HttpStatus_Code status_code = player_cmd(GET_STATE, NULL);
+                if (status_code == HttpStatus_Ok) {
+                    // there is a device atached to playback,
+                    // fire as a first event
+                    xEventGroupSetBits(event_group, PLAYER_FIRST_EVENT);
+                } else if (status_code == 204) {
+                    // no device is atached to playback,
+                    // fire an event of no device playing
+                    xEventGroupSetBits(event_group, NO_PLAYER_ACTIVE_EVENT);
+                } else {
+                    ESP_LOGE(TAG, "Error trying to get player state");
+                    xEventGroupSetBits(event_group, ERROR_EVENT);
+                    break;
+                }
+
+                // start the ws session
                 char* uri = http_utils_join_string("wss://dealer.spotify.com/?access_token=", 0, http_client.token.value + 7, strlen(http_client.token.value) - 7);
                 esp_websocket_client_set_uri(ws_client_handle, uri);
                 free(uri);
@@ -289,22 +306,6 @@ static void player_task(void* pvParameters)
                         xEventGroupSetBits(event_group, ERROR_EVENT);
                         break;
                     }
-
-                    HttpStatus_Code status_code = player_cmd(GET_STATE, NULL);
-                    if (status_code == HttpStatus_Ok) {
-                        // there is a device atached to playback,
-                        // fire as a first event
-                        xEventGroupSetBits(event_group, PLAYER_FIRST_EVENT);
-                    } else if (status_code == 204) {
-                        // no device is atached to playback,
-                        // fire an event of no device playing
-                        xEventGroupSetBits(event_group, NO_PLAYER_ACTIVE_EVENT);
-                    } else {
-                        ESP_LOGE(TAG, "Error trying to get player state");
-                        xEventGroupSetBits(event_group, ERROR_EVENT);
-                        break;
-                    }
-
                 } else {
                     uint32_t evt = parseWebsocketEvent(websocket_buffer, &data);
 
