@@ -261,6 +261,7 @@ static void player_task(void* pvParameters)
 
                 if (get_access_token() != HttpStatus_Ok) {
                     ESP_LOGE(TAG, "Error trying to get an access token");
+                    xEventGroupSetBits(event_group, ERROR_EVENT);
                     break;
                 }
 
