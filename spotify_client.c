@@ -60,7 +60,7 @@ static SemaphoreHandle_t      http_client_lock = NULL; /* Mutex to manage access
 static uint8_t                s_retries = 0; /* number of retries on error connections */
 static HttpClient_data_t      http_client = { .token.value = { 'B', 'e', 'a', 'r', 'e', 'r', ' ', '\0' } };
 static const char*            HTTP_METHOD_LOOKUP[] = { "GET", "POST", "PUT" };
-esp_websocket_client_handle_t ws_client;
+esp_websocket_client_handle_t ws_client_handle;
 
 /* Globally scoped variables definitions -------------------------------------*/
 TrackInfo* TRACK = &(TrackInfo) { 0 }; /* pointer to an unnamed object, constructed in place
@@ -107,8 +107,8 @@ esp_err_t spotify_client_init(UBaseType_t priority, EventGroupHandle_t* event_gr
         return ESP_FAIL;
     }
 
-    ws_client = esp_websocket_client_init(&websocket_cfg);
-    if (!ws_client) {
+    ws_client_handle = esp_websocket_client_init(&websocket_cfg);
+    if (!ws_client_handle) {
         ESP_LOGE(TAG, "Error on esp_websocket_client_init()");
         return ESP_FAIL;
     }
@@ -265,13 +265,13 @@ static void player_task(void* pvParameters)
                 }
 
                 char* uri = http_utils_join_string("wss://dealer.spotify.com/?access_token=", 0, http_client.token.value + 7, strlen(http_client.token.value) - 7);
-                esp_websocket_client_set_uri(ws_client, uri);
+                esp_websocket_client_set_uri(ws_client_handle, uri);
                 free(uri);
-                esp_websocket_register_events(ws_client, WEBSOCKET_EVENT_ANY, default_ws_event_handler, &handler_args);
-                esp_websocket_client_start(ws_client);
+                esp_websocket_register_events(ws_client_handle, WEBSOCKET_EVENT_ANY, default_ws_event_handler, &handler_args);
+                esp_websocket_client_start(ws_client_handle);
 
             } else if (uxBits & DISABLE_PLAYER) {
-                esp_websocket_client_close(ws_client, portMAX_DELAY);
+                esp_websocket_client_close(ws_client_handle, portMAX_DELAY);
 
             } else if (uxBits & WS_DATA_EVENT) {
 
