@@ -37,8 +37,18 @@ void default_http_event_handler(char* http_buffer, esp_http_client_event_t* evt)
             return;
         }
 
-        memcpy(http_buffer + output_len, evt->data, evt->data_len);
-        output_len += evt->data_len;
+        int left = evt->data_left;
+        while (left--) {
+            *(htttp_buffer + output_len++) = *src++;
+            if (isspace((unsigned int) *(src - 1))) {
+                while (left-- && isspace((unsigned int) *src++)) {
+                    output_len++;
+                }
+            }
+        }
+
+        //memcpy(http_buffer + output_len, evt->data, evt->data_len);
+        //output_len += evt->data_len;
         break;
     case HTTP_EVENT_ON_FINISH:
         http_buffer[output_len] = 0;
