@@ -23,43 +23,23 @@ static const char* TAG = "HANDLER_CALLBACKS";
 /* External variables --------------------------------------------------------*/
 
 /* Private function prototypes -----------------------------------------------*/
+int static inline write_buffer_trimmed(char* dest, int dest_free_space, char* src, int src_len);
 
 /* Exported functions --------------------------------------------------------*/
 void default_http_event_handler(char* http_buffer, esp_http_client_event_t* evt)
 {
 
-    static int output_len = 0; // Stores number of bytes stored in buffer
-
-    static int bytes_omitted = 0;
+    static int chars_stored = 0;
 
     switch (evt->event_id) {
     case HTTP_EVENT_ON_DATA:
-        int   left = evt->data_len;
-        char* src = (char*)evt->data;
-        while (left--) {
-            if (!isspace((unsigned int)*src) || *src == ' ') {
-                if (output_len > MAX_HTTP_BUFFER - 1) {
-                    output_len++;
-                    ESP_LOGE(TAG, "Buffer overflow, data will be truncated!");
-                    return;
-                }
-                *(http_buffer + output_len++) = *src;
-                if (*src++ == ' ') {
-                    while (left && *src == ' ') {
-                        bytes_omitted++;
-                        left--;
-                        src++;
-                    }
-                }
-            } else {
-                bytes_omitted++;
-            }
-        }
+        int stored = write_buffer_trimmed(http_buffer + chars_stored, MAX_HTTP_BUFFER - chars_stored, evt->data, evt->data_len);
+        chars_stored += stored;
         break;
     case HTTP_EVENT_ON_FINISH:
-        ESP_LOGI(TAG, "Bytes writed: %d\nBytes omitted: %d", output_len, bytes_omitted);
-        http_buffer[output_len] = 0;
-        output_len = bytes_omitted = 0;
+        ESP_LOGI(TAG, "Chars stored: %d", chars_stored);
+        http_buffer[chars_stored] = 0;
+        chars_stored = 0;
         break;
     case HTTP_EVENT_DISCONNECTED:;
         int       mbedtls_err = 0;
@@ -67,8 +47,8 @@ void default_http_event_handler(char* http_buffer, esp_http_client_event_t* evt)
         if (err != ESP_OK) {
             ESP_LOGI(TAG, "Last esp error code: 0x%x", err);
             ESP_LOGI(TAG, "Last mbedtls failure: 0x%x", mbedtls_err);
-            http_buffer[output_len] = 0;
-            output_len = bytes_omitted = 0;
+            http_buffer[chars_stored] = 0;
+            chars_stored = 0;
         }
         break;
     default:
@@ -139,7 +119,7 @@ void default_ws_event_handler(void* handler_args, esp_event_base_t base, int32_t
  */
 void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
 {
-    static int       output_len = 0; // Stores number of bytes stored in buffer
+    static int       chars_stored = 0; // Number of chars stored in buffer
     static int       in_items = 0; // Bandera para indicar si estamos dentro del arreglo "items"
     static int       brace_count = 0; // Contador de llaves para detectar el final de un elemento
     static esp_err_t err = ESP_OK;
@@ -167,15 +147,16 @@ void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
                 if (data[i] == '{') {
                     if (brace_count == 0) {
                         // Start of new playlist
-                        output_len = 0;
+                        chars_stored = 0;
                     }
                     brace_count++;
                 }
                 if (brace_count > 0) {
-                    if (output_len < MAX_HTTP_BUFFER - 1) {
-                        http_buffer[output_len++] = data[i];
+                    if (chars_stored < MAX_HTTP_BUFFER - 1) {
+                        http_buffer[chars_stored++] = data[i];
                     } else {
-                        ESP_LOGE(TAG, "Buffer overflow, data_len=%d", left);
+                        ESP_LOGE(TAG, "Buffer overflow, data will be truncated!");
+                        http_buffer[chars_stored] = '\0';
                         err = ESP_FAIL;
                         return;
                     }
@@ -184,9 +165,9 @@ void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
                     brace_count--;
                     if (brace_count == 0) {
                         // End of playlist
-                        http_buffer[output_len] = '\0';
+                        http_buffer[chars_stored] = '\0';
                         // parse_playlist(http_buffer);
-                        output_len = 0;
+                        chars_stored = 0;
                     }
                 }
             }
@@ -194,10 +175,10 @@ void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
         break;
     case HTTP_EVENT_ON_FINISH:
         // err ? NOTIFY_DISPLAY(PLAYLISTS_ERROR) : NOTIFY_DISPLAY(PLAYLISTS_OK);
-        output_len = in_items = brace_count = err = 0;
+        chars_stored = in_items = brace_count = err = 0;
         break;
     case HTTP_EVENT_DISCONNECTED:
-        output_len = in_items = brace_count = err = 0;
+        chars_stored = in_items = brace_count = err = 0;
         // NOTIFY_DISPLAY(PLAYLISTS_ERROR);
         break;
     default:
@@ -206,3 +187,23 @@ void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
 }
 
 /* Private functions ---------------------------------------------------------*/
+int static inline write_buffer_trimmed(char* dest, int dest_free_space, char* src, int src_len)
+{
+    int chars_stored = 0;
+    while (src_len--) {
+        if (!isspace((unsigned int)*src) || *src == ' ') {
+            if (chars_stored > dest_free_space - 1) {
+                ESP_LOGE(TAG, "Buffer overflow, stoping writing!");
+                return chars_stored;
+            }
+            *(dest + chars_stored++) = *src;
+        }
+        if (*src++ == ' ') {
+            while (src_len && *src == ' ') {
+                src_len--;
+                src++;
+            }
+        }
+    }
+    return chars_stored;
+}
