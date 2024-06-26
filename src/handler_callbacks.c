@@ -23,17 +23,16 @@ static const char* TAG = "HANDLER_CALLBACKS";
 /* External variables --------------------------------------------------------*/
 
 /* Private function prototypes -----------------------------------------------*/
-int static inline write_buffer_trimmed(char* dest, int dest_free_space, char* src, int src_len);
+size_t static inline memcpy_trimmed(char* dest, int dest_size, const char* src, size_t src_len);
 
 /* Exported functions --------------------------------------------------------*/
 void default_http_event_handler(char* http_buffer, esp_http_client_event_t* evt)
 {
-
-    static int chars_stored = 0;
+    static size_t chars_stored = 0;
 
     switch (evt->event_id) {
     case HTTP_EVENT_ON_DATA:
-        int stored = write_buffer_trimmed(http_buffer + chars_stored, MAX_HTTP_BUFFER - chars_stored, evt->data, evt->data_len);
+        size_t stored = memcpy_trimmed(http_buffer + chars_stored, MAX_HTTP_BUFFER - chars_stored, evt->data, evt->data_len);
         chars_stored += stored;
         break;
     case HTTP_EVENT_ON_FINISH:
@@ -41,7 +40,7 @@ void default_http_event_handler(char* http_buffer, esp_http_client_event_t* evt)
         http_buffer[chars_stored] = 0;
         chars_stored = 0;
         break;
-    case HTTP_EVENT_DISCONNECTED:;
+    case HTTP_EVENT_DISCONNECTED:
         int       mbedtls_err = 0;
         esp_err_t err = esp_tls_get_and_clear_last_error(evt->data, &mbedtls_err, NULL);
         if (err != ESP_OK) {
@@ -187,23 +186,24 @@ void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
 }
 
 /* Private functions ---------------------------------------------------------*/
-int static inline write_buffer_trimmed(char* dest, int dest_free_space, char* src, int src_len)
+size_t static inline memcpy_trimmed(char* dest, int dest_size, const char* src, size_t src_len)
 {
-    int chars_stored = 0;
-    while (src_len--) {
-        if (!isspace((unsigned int)*src) || *src == ' ') {
-            if (chars_stored > dest_free_space - 1) {
-                ESP_LOGE(TAG, "Buffer overflow, stoping writing!");
-                return chars_stored;
-            }
-            *(dest + chars_stored++) = *src;
+    bool   in_whitespace = false;
+    size_t chars_stored = 0;
+    for (size_t i = 0; i < src_len; i++) {
+        if ((int)chars_stored > dest_size - 1) {
+            ESP_LOGE(TAG, "Buffer overflow, stoping writing!");
+            return chars_stored;
         }
-        if (*src++ == ' ') {
-            while (src_len && *src == ' ') {
-                src_len--;
-                src++;
+        if (src[i] == ' ') {
+            if (!in_whitespace) {
+                dest[chars_stored++] = ' ';
+                in_whitespace = true;
             }
+        } else if (!isspace((unsigned char)src[i])) {
+            in_whitespace = false;
+            dest[chars_stored++] = src[i];
         }
     }
-    return chars_stored;
+    return chars_stored; // Retorna la cantidad de caracteres copiados
 }
