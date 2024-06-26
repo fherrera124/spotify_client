@@ -128,21 +128,28 @@ void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
 
     switch (evt->event_id) {
     case HTTP_EVENT_ON_DATA:
-        // ESP_LOGI(TAG, "Data received: %s", data);
         if (err == ESP_FAIL) {
             return;
         }
         if (!in_items) {
             char* match_found = memmem(data, left, ITEMS_START, ITEMS_START_LEN);
-            if (match_found) {
-                in_items = 1;
-                match_found += ITEMS_START_LEN;
-                left -= match_found - data;
-                data = match_found;
-            }
+            if (!match_found)
+                break;
+            in_items = 1;
+            match_found += ITEMS_START_LEN;
+            left -= match_found - data;
+            data = match_found;
         }
-        if (in_items) {
-            for (int i = 0; i < left; i++) {
+        bool in_whitespace = false;
+        for (int i = 0; i < left; i++) {
+            if (data[i] == ' ') {
+                if (!in_whitespace) {
+                    http_buffer[chars_stored++] = ' ';
+                    in_whitespace = true;
+                    continue;
+                }
+            } else if (!isspace((unsigned char)data[i])) {
+                in_whitespace = false;
                 if (data[i] == '{') {
                     if (brace_count == 0) {
                         // Start of new playlist
@@ -165,7 +172,8 @@ void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
                     if (brace_count == 0) {
                         // End of playlist
                         http_buffer[chars_stored] = '\0';
-                        // parse_playlist(http_buffer);
+                        ESP_LOGW(TAG, "Playlist:\n%s", http_buffer);
+                        // TODO: send playlist item
                         chars_stored = 0;
                     }
                 }
@@ -205,5 +213,5 @@ size_t static inline memcpy_trimmed(char* dest, int dest_size, const char* src, 
             dest[chars_stored++] = src[i];
         }
     }
-    return chars_stored; // Retorna la cantidad de caracteres copiados
+    return chars_stored;
 }
