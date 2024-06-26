@@ -82,6 +82,7 @@ static void            handle_track_fetched(TrackInfo** new_track);
 static void            handle_err_connection();
 static void            debug_mem();
 bool                   is_player_state_changed(const char* message);
+HttpStatus_Code        http_user_playlists();
 
 /* Exported functions --------------------------------------------------------*/
 esp_err_t spotify_client_init(UBaseType_t priority, EventGroupHandle_t* event_group_ptr)
@@ -233,7 +234,6 @@ retry:
 }
 
 /* Private functions ---------------------------------------------------------*/
-
 static void player_task(void* pvParameters)
 {
     handler_args_t handler_args = {
@@ -408,6 +408,30 @@ retry:
             parseAccessToken(http_buffer, &http_client.token);
             ESP_LOGD(TAG, "Access Token obtained:\n%s", &http_client.token.value[7]);
         }
+        RELEASE_LOCK(http_client_lock);
+        return status_code;
+    } else {
+        handle_err_connection(err);
+        goto retry;
+    }
+}
+
+HttpStatus_Code http_user_playlists()
+{
+    ACQUIRE_LOCK(http_client_lock);
+    http_client.handler_cb = playlists_handler;
+    http_client.method = HTTP_METHOD_GET;
+    http_client.endpoint = PLAYERURL("/me/playlists?offset=0&limit=50");
+    PREPARE_CLIENT(http_client, http_client.token.value, "application/json");
+retry:
+    ESP_LOGD(TAG, "Endpoint to send: %s", http_client.endpoint);
+    esp_err_t err = esp_http_client_perform(http_client.handle);
+
+    if (err == ESP_OK) {
+        s_retries = 0;
+        HttpStatus_Code status_code = esp_http_client_get_status_code(http_client.handle);
+        int             length = esp_http_client_get_content_length(http_client.handle);
+        ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", status_code, length);
         RELEASE_LOCK(http_client_lock);
         return status_code;
     } else {
