@@ -149,34 +149,35 @@ void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
                     in_whitespace = true;
                     continue;
                 }
-            } else if (!isspace((unsigned char)data[i])) {
-                in_whitespace = false;
-                if (data[i] == '{') {
-                    if (brace_count == 0) {
-                        // Start of new playlist
-                        chars_stored = 0;
-                    }
-                    brace_count++;
+            } else if (isspace((unsigned char)data[i])) {
+                continue;
+            }
+            in_whitespace = false;
+            if (data[i] == '{') {
+                if (brace_count == 0) {
+                    // Start of new playlist
+                    chars_stored = 0;
                 }
-                if (brace_count > 0) {
-                    if (chars_stored < MAX_HTTP_BUFFER - 1) {
-                        http_buffer[chars_stored++] = data[i];
-                    } else {
-                        ESP_LOGE(TAG, "Buffer overflow, data will be truncated!");
-                        http_buffer[chars_stored] = '\0';
-                        err = ESP_FAIL;
-                        return;
-                    }
+                brace_count++;
+            }
+            if (brace_count > 0) {
+                if (chars_stored < MAX_HTTP_BUFFER - 1) {
+                    http_buffer[chars_stored++] = data[i];
+                } else {
+                    ESP_LOGE(TAG, "Buffer overflow, data will be truncated!");
+                    http_buffer[chars_stored] = '\0';
+                    err = ESP_FAIL;
+                    return;
                 }
-                if (data[i] == '}') {
-                    brace_count--;
-                    if (brace_count == 0) {
-                        // End of playlist
-                        http_buffer[chars_stored] = '\0';
-                        ESP_LOGW(TAG, "Playlist:\n%s", http_buffer);
-                        // TODO: send playlist item
-                        chars_stored = 0;
-                    }
+            }
+            if (data[i] == '}') {
+                brace_count--;
+                if (brace_count == 0) {
+                    // End of playlist
+                    http_buffer[chars_stored] = '\0';
+                    ESP_LOGW(TAG, "Playlist(len: %d):\n%s", strlen(http_buffer), http_buffer);
+                    // TODO: send playlist item
+                    chars_stored = 0;
                 }
             }
         }
@@ -197,7 +198,6 @@ void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
 /* Private functions ---------------------------------------------------------*/
 size_t static inline memcpy_trimmed(char* dest, int dest_size, const char* src, size_t src_len)
 {
-    bool   in_whitespace = false;
     size_t chars_stored = 0;
     for (size_t i = 0; i < src_len; i++) {
         if ((int)chars_stored > dest_size - 1) {
@@ -205,12 +205,47 @@ size_t static inline memcpy_trimmed(char* dest, int dest_size, const char* src, 
             return chars_stored;
         }
         if (src[i] == ' ') {
-            if (!in_whitespace) {
-                dest[chars_stored++] = ' ';
-                in_whitespace = true;
+            if (i > 0) {
+                switch (src[i - 1]) {
+                case ',':
+                    if ((i + 1 < src_len) && (src[i + 1] == '\"')) {
+                        continue;
+                    }
+                    break;
+                case ' ':
+                case '\"':
+                case ':':
+                case '[':
+                case ']':
+                case '{':
+                case '}':
+                    continue;
+                default:
+                    break;
+                }
             }
+            if (i + 1 < src_len) {
+
+                switch (src[i + 1]) {
+                case ',':
+                    if ((i - 1 > 0) && src[i - 1] == '\"') {
+                        continue;
+                    }
+                    break;
+                case ' ':
+                case '\"':
+                case ':':
+                case '[':
+                case ']':
+                case '{':
+                case '}':
+                    continue;
+                default:
+                    break;
+                }
+            }
+            dest[chars_stored++] = src[i];
         } else if (!isspace((unsigned char)src[i])) {
-            in_whitespace = false;
             dest[chars_stored++] = src[i];
         }
     }
