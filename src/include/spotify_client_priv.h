@@ -28,6 +28,8 @@ extern "C" {
 #define WS_DATA_EVENT       (1 << 2)
 #define WS_DISCONNECT_EVENT (1 << 3)
 #define BUFFER_CONSUMED     (1 << 6)
+#define START_WS            (1 << 7)
+#define WS_CONNECT_EVENT    (1 << 8)
 
 /* Exported types ------------------------------------------------------------*/
 

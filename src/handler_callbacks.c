@@ -68,6 +68,7 @@ void default_ws_event_handler(void* handler_args, esp_event_base_t base, int32_t
     switch (event_id) {
     case WEBSOCKET_EVENT_CONNECTED:
         ESP_LOGD(TAG, "WebSocket Connected");
+        xEventGroupSetBits(event_group, WS_CONNECT_EVENT);
         break;
     case WEBSOCKET_EVENT_DISCONNECTED:
         ESP_LOGD(TAG, "WebSocket Disconnected");
