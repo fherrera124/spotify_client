@@ -30,29 +30,36 @@ void default_http_event_handler(char* http_buffer, esp_http_client_event_t* evt)
 
     static int output_len = 0; // Stores number of bytes stored in buffer
 
+    static int bytes_omitted = 0;
+
     switch (evt->event_id) {
     case HTTP_EVENT_ON_DATA:
-        if ((output_len + evt->data_len) > MAX_HTTP_BUFFER) {
-            ESP_LOGE(TAG, "Buffer overflow, data_len=%d", evt->data_len);
-            return;
-        }
-
-        int left = evt->data_left;
+        int   left = evt->data_len;
+        char* src = (char*)evt->data;
         while (left--) {
-            *(htttp_buffer + output_len++) = *src++;
-            if (isspace((unsigned int) *(src - 1))) {
-                while (left-- && isspace((unsigned int) *src++)) {
+            if (!isspace((unsigned int)*src) || *src == ' ') {
+                if (output_len > MAX_HTTP_BUFFER - 1) {
                     output_len++;
+                    ESP_LOGE(TAG, "Buffer overflow, data will be truncated!");
+                    return;
                 }
+                *(http_buffer + output_len++) = *src;
+                if (*src++ == ' ') {
+                    while (left && *src == ' ') {
+                        bytes_omitted++;
+                        left--;
+                        src++;
+                    }
+                }
+            } else {
+                bytes_omitted++;
             }
         }
-
-        //memcpy(http_buffer + output_len, evt->data, evt->data_len);
-        //output_len += evt->data_len;
         break;
     case HTTP_EVENT_ON_FINISH:
+        ESP_LOGI(TAG, "Bytes writed: %d\nBytes omitted: %d", output_len, bytes_omitted);
         http_buffer[output_len] = 0;
-        output_len = 0;
+        output_len = bytes_omitted = 0;
         break;
     case HTTP_EVENT_DISCONNECTED:;
         int       mbedtls_err = 0;
@@ -61,7 +68,7 @@ void default_http_event_handler(char* http_buffer, esp_http_client_event_t* evt)
             ESP_LOGI(TAG, "Last esp error code: 0x%x", err);
             ESP_LOGI(TAG, "Last mbedtls failure: 0x%x", mbedtls_err);
             http_buffer[output_len] = 0;
-            output_len = 0;
+            output_len = bytes_omitted = 0;
         }
         break;
     default:
@@ -74,7 +81,7 @@ void default_ws_event_handler(void* handler_args, esp_event_base_t base, int32_t
 
     handler_args_t* args = (handler_args_t*)handler_args;
 
-    char*               buffer = args->buffer;
+    char*              buffer = args->buffer;
     EventGroupHandle_t event_group = args->event_group;
 
     esp_websocket_event_data_t* data = (esp_websocket_event_data_t*)event_data;
