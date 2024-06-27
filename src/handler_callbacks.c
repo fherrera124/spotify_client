@@ -141,18 +141,20 @@ void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
             left -= match_found - data;
             data = match_found;
         }
-        bool in_whitespace = false;
         for (int i = 0; i < left; i++) {
-            if (data[i] == ' ') {
-                if (!in_whitespace) {
-                    http_buffer[chars_stored++] = ' ';
-                    in_whitespace = true;
+            char prev = (i > 0) ? data[i - 1] : 0;
+            char next = (i < left - 1) ? data[i + 1] : 0;
+            // Skip unnecessary spaces
+            if (isspace((unsigned char)data[i])) {
+                if (prev == ',' && next == '\"')
                     continue;
-                }
-            } else if (isspace((unsigned char)data[i])) {
-                continue;
+                if (prev == ':' && strchr(" \"[]{}", next))
+                    continue;
+                if (strchr(" \"[]{}", prev) || strchr(" \"[]{}", next))
+                    continue;
             }
-            in_whitespace = false;
+            // TODO: analize scenario: "Foo bar: 50 greatest hits"
+
             if (data[i] == '{') {
                 if (brace_count == 0) {
                     // Start of new playlist
@@ -188,7 +190,6 @@ void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
         break;
     case HTTP_EVENT_DISCONNECTED:
         chars_stored = in_items = brace_count = err = 0;
-        // NOTIFY_DISPLAY(PLAYLISTS_ERROR);
         break;
     default:
         break;
@@ -204,50 +205,20 @@ size_t static inline memcpy_trimmed(char* dest, int dest_size, const char* src, 
             ESP_LOGE(TAG, "Buffer overflow, stoping writing!");
             return chars_stored;
         }
-        if (src[i] == ' ') {
-            if (i > 0) {
-                switch (src[i - 1]) {
-                case ',':
-                    if ((i + 1 < src_len) && (src[i + 1] == '\"')) {
-                        continue;
-                    }
-                    break;
-                case ' ':
-                case '\"':
-                case ':':
-                case '[':
-                case ']':
-                case '{':
-                case '}':
-                    continue;
-                default:
-                    break;
-                }
-            }
-            if (i + 1 < src_len) {
-
-                switch (src[i + 1]) {
-                case ',':
-                    if ((i - 1 > 0) && src[i - 1] == '\"') {
-                        continue;
-                    }
-                    break;
-                case ' ':
-                case '\"':
-                case ':':
-                case '[':
-                case ']':
-                case '{':
-                case '}':
-                    continue;
-                default:
-                    break;
-                }
-            }
-            dest[chars_stored++] = src[i];
-        } else if (!isspace((unsigned char)src[i])) {
-            dest[chars_stored++] = src[i];
+        char current = src[i];
+        char prev = (i > 0) ? src[i - 1] : 0;
+        char next = (i < src_len - 1) ? src[i + 1] : 0;
+        // Skip unnecessary spaces
+        if (isspace((unsigned char)current)) {
+            if (prev == ',' && next == '\"')
+                continue;
+            if (prev == ':' && strchr(" \"[]{}", next))
+                continue;
+            if (strchr(" \"[]{}", prev) || strchr(" \"[]{}", next))
+                continue;
         }
+        // TODO: analize scenario: "Foo bar: 50 greatest hits"
+        dest[chars_stored++] = src[i];
     }
     return chars_stored;
 }
