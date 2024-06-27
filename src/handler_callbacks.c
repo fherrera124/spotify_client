@@ -125,7 +125,7 @@ void playlists_handler(char* dest, esp_http_client_event_t* evt)
     static esp_err_t err = ESP_OK;
 
     char* src = (char*)evt->data;
-    int   left = evt->data_len;
+    int   src_len = evt->data_len;
 
     switch (evt->event_id) {
     case HTTP_EVENT_ON_DATA:
@@ -133,19 +133,19 @@ void playlists_handler(char* dest, esp_http_client_event_t* evt)
             return;
         }
         if (!in_items) {
-            char* match_found = memmem(src, left, ITEMS_START, ITEMS_START_LEN);
+            char* match_found = memmem(src, src_len, ITEMS_START, ITEMS_START_LEN);
             if (!match_found)
                 break;
             in_items = 1;
             match_found += ITEMS_START_LEN;
-            left -= match_found - src;
+            src_len -= match_found - src;
             src = match_found;
         }
-        for (int i = 0; i < left; i++) {
+        for (int i = 0; i < src_len; i++) {
             // Skip unnecessary spaces
             if (isspace((unsigned char)src[i])) {
                 char prev = i ? src[i - 1] : 0;
-                char next = (i < left - 1) ? src[i + 1] : 0;
+                char next = (i < src_len - 1) ? src[i + 1] : 0;
                 if (prev == ',' && next == '\"')
                     continue;
                 if (prev == ':' && chars_stored > 1) {
@@ -186,7 +186,6 @@ void playlists_handler(char* dest, esp_http_client_event_t* evt)
         }
         break;
     case HTTP_EVENT_ON_FINISH:
-        // err ? NOTIFY_DISPLAY(PLAYLISTS_ERROR) : NOTIFY_DISPLAY(PLAYLISTS_OK);
         chars_stored = in_items = brace_count = err = 0;
         break;
     case HTTP_EVENT_DISCONNECTED:
@@ -202,10 +201,6 @@ size_t static inline memcpy_trimmed(char* dest, int dest_size, const char* src, 
 {
     size_t chars_stored = 0;
     for (size_t i = 0; i < src_len; i++) {
-        if ((int)chars_stored > dest_size - 1) {
-            ESP_LOGE(TAG, "Buffer overflow, stoping writing!");
-            return chars_stored;
-        }
         // Skip unnecessary spaces
         if (isspace((unsigned char)src[i])) {
             char prev = i ? src[i - 1] : 0;
@@ -218,6 +213,10 @@ size_t static inline memcpy_trimmed(char* dest, int dest_size, const char* src, 
             }
             if (strchr(" \"[]{}", prev) || strchr(" \"[]{}", next))
                 continue;
+        }
+        if ((int)chars_stored > dest_size - 1) {
+            ESP_LOGE(TAG, "Buffer overflow, stoping writing!");
+            return chars_stored;
         }
         dest[chars_stored++] = src[i];
     }
