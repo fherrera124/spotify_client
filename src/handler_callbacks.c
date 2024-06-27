@@ -124,7 +124,7 @@ void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
     static int       brace_count = 0; // Contador de llaves para detectar el final de un elemento
     static esp_err_t err = ESP_OK;
 
-    char* data = (char*)evt->data;
+    char* src = (char*)evt->data;
     int   left = evt->data_len;
 
     switch (evt->event_id) {
@@ -133,29 +133,32 @@ void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
             return;
         }
         if (!in_items) {
-            char* match_found = memmem(data, left, ITEMS_START, ITEMS_START_LEN);
+            char* match_found = memmem(src, left, ITEMS_START, ITEMS_START_LEN);
             if (!match_found)
                 break;
             in_items = 1;
             match_found += ITEMS_START_LEN;
-            left -= match_found - data;
-            data = match_found;
+            left -= match_found - src;
+            src = match_found;
         }
         for (int i = 0; i < left; i++) {
-            char prev = (i > 0) ? data[i - 1] : 0;
-            char next = (i < left - 1) ? data[i + 1] : 0;
+            char prev = (i > 0) ? src[i - 1] : 0;
+            char next = (i < left - 1) ? src[i + 1] : 0;
             // Skip unnecessary spaces
-            if (isspace((unsigned char)data[i])) {
+            if (isspace((unsigned char)src[i])) {
                 if (prev == ',' && next == '\"')
                     continue;
-                if (prev == ':' && strchr(" \"[]{}", next))
-                    continue;
+                if (prev == ':') {
+                    char prev_prev = (i > 1) ? src[i - 2] : 0;
+                    if (strchr(" \"", prev_prev))
+                        continue;
+                }
                 if (strchr(" \"[]{}", prev) || strchr(" \"[]{}", next))
                     continue;
             }
             // TODO: analize scenario: "Foo bar: 50 greatest hits"
 
-            if (data[i] == '{') {
+            if (src[i] == '{') {
                 if (brace_count == 0) {
                     // Start of new playlist
                     chars_stored = 0;
@@ -164,7 +167,7 @@ void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
             }
             if (brace_count > 0) {
                 if (chars_stored < MAX_HTTP_BUFFER - 1) {
-                    http_buffer[chars_stored++] = data[i];
+                    http_buffer[chars_stored++] = src[i];
                 } else {
                     ESP_LOGE(TAG, "Buffer overflow, data will be truncated!");
                     http_buffer[chars_stored] = '\0';
@@ -172,7 +175,7 @@ void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
                     return;
                 }
             }
-            if (data[i] == '}') {
+            if (src[i] == '}') {
                 brace_count--;
                 if (brace_count == 0) {
                     // End of playlist
@@ -212,8 +215,11 @@ size_t static inline memcpy_trimmed(char* dest, int dest_size, const char* src, 
         if (isspace((unsigned char)current)) {
             if (prev == ',' && next == '\"')
                 continue;
-            if (prev == ':' && strchr(" \"[]{}", next))
-                continue;
+            if (prev == ':') {
+                    char prev_prev = (i > 1) ? src[i - 2] : 0;
+                    if (strchr(" \"", prev_prev))
+                        continue;
+                }
             if (strchr(" \"[]{}", prev) || strchr(" \"[]{}", next))
                 continue;
         }
