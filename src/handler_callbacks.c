@@ -142,15 +142,14 @@ void playlists_handler(char* dest, esp_http_client_event_t* evt)
             src = match_found;
         }
         for (int i = 0; i < left; i++) {
-            char prev = (i > 0) ? src[i - 1] : 0;
-            char next = (i < left - 1) ? src[i + 1] : 0;
             // Skip unnecessary spaces
             if (isspace((unsigned char)src[i])) {
+                char prev = i ? src[i - 1] : 0;
+                char next = (i < left - 1) ? src[i + 1] : 0;
                 if (prev == ',' && next == '\"')
                     continue;
-                if (prev == ':') {
-                    char prev_prev = (chars_stored > 1) ? dest[chars_stored - 2] : 0;
-                    if (prev_prev == '\"')
+                if (prev == ':' && chars_stored > 1) {
+                    if (dest[chars_stored - 2] == '\"')
                         continue;
                 }
                 if (strchr(" \"[]{}", prev) || strchr(" \"[]{}", next))
@@ -207,18 +206,16 @@ size_t static inline memcpy_trimmed(char* dest, int dest_size, const char* src, 
             ESP_LOGE(TAG, "Buffer overflow, stoping writing!");
             return chars_stored;
         }
-        char current = src[i];
-        char prev = (i > 0) ? src[i - 1] : 0;
-        char next = (i < src_len - 1) ? src[i + 1] : 0;
         // Skip unnecessary spaces
-        if (isspace((unsigned char)current)) {
+        if (isspace((unsigned char)src[i])) {
+            char prev = i ? src[i - 1] : 0;
+            char next = (i < src_len - 1) ? src[i + 1] : 0;
             if (prev == ',' && next == '\"')
                 continue;
-            if (prev == ':') {
-                    char prev_prev = (chars_stored > 1) ? dest[chars_stored - 2] : 0;
-                    if (prev_prev == '\"')
-                        continue;
-                }
+            if (prev == ':' && chars_stored > 1) {
+                if (dest[chars_stored - 2] == '\"')
+                    continue;
+            }
             if (strchr(" \"[]{}", prev) || strchr(" \"[]{}", next))
                 continue;
         }
