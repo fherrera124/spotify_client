@@ -26,18 +26,18 @@ static const char* TAG = "HANDLER_CALLBACKS";
 size_t static inline memcpy_trimmed(char* dest, int dest_size, const char* src, size_t src_len);
 
 /* Exported functions --------------------------------------------------------*/
-void default_http_event_handler(char* http_buffer, esp_http_client_event_t* evt)
+void default_http_event_handler(char* dest, esp_http_client_event_t* evt)
 {
     static size_t chars_stored = 0;
 
     switch (evt->event_id) {
     case HTTP_EVENT_ON_DATA:
-        size_t stored = memcpy_trimmed(http_buffer + chars_stored, MAX_HTTP_BUFFER - chars_stored, evt->data, evt->data_len);
+        size_t stored = memcpy_trimmed(dest + chars_stored, MAX_HTTP_BUFFER - chars_stored, evt->data, evt->data_len);
         chars_stored += stored;
         break;
     case HTTP_EVENT_ON_FINISH:
         ESP_LOGI(TAG, "Chars stored: %d", chars_stored);
-        http_buffer[chars_stored] = 0;
+        dest[chars_stored] = 0;
         chars_stored = 0;
         break;
     case HTTP_EVENT_DISCONNECTED:
@@ -46,7 +46,7 @@ void default_http_event_handler(char* http_buffer, esp_http_client_event_t* evt)
         if (err != ESP_OK) {
             ESP_LOGI(TAG, "Last esp error code: 0x%x", err);
             ESP_LOGI(TAG, "Last mbedtls failure: 0x%x", mbedtls_err);
-            http_buffer[chars_stored] = 0;
+            dest[chars_stored] = 0;
             chars_stored = 0;
         }
         break;
@@ -117,7 +117,7 @@ void default_ws_event_handler(void* handler_args, esp_event_base_t base, int32_t
  * approach is to process the "items" array one playlist at a time.
  *
  */
-void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
+void playlists_handler(char* dest, esp_http_client_event_t* evt)
 {
     static int       chars_stored = 0; // Number of chars stored in buffer
     static int       in_items = 0; // Bandera para indicar si estamos dentro del arreglo "items"
@@ -149,14 +149,13 @@ void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
                 if (prev == ',' && next == '\"')
                     continue;
                 if (prev == ':') {
-                    char prev_prev = (i > 1) ? src[i - 2] : 0;
-                    if (strchr(" \"", prev_prev))
+                    char prev_prev = (chars_stored > 1) ? dest[chars_stored - 2] : 0;
+                    if (prev_prev == '\"')
                         continue;
                 }
                 if (strchr(" \"[]{}", prev) || strchr(" \"[]{}", next))
                     continue;
             }
-            // TODO: analize scenario: "Foo bar: 50 greatest hits"
 
             if (src[i] == '{') {
                 if (brace_count == 0) {
@@ -167,10 +166,10 @@ void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
             }
             if (brace_count > 0) {
                 if (chars_stored < MAX_HTTP_BUFFER - 1) {
-                    http_buffer[chars_stored++] = src[i];
+                    dest[chars_stored++] = src[i];
                 } else {
                     ESP_LOGE(TAG, "Buffer overflow, data will be truncated!");
-                    http_buffer[chars_stored] = '\0';
+                    dest[chars_stored] = '\0';
                     err = ESP_FAIL;
                     return;
                 }
@@ -179,8 +178,8 @@ void playlists_handler(char* http_buffer, esp_http_client_event_t* evt)
                 brace_count--;
                 if (brace_count == 0) {
                     // End of playlist
-                    http_buffer[chars_stored] = '\0';
-                    ESP_LOGW(TAG, "Playlist(len: %d):\n%s", strlen(http_buffer), http_buffer);
+                    dest[chars_stored] = '\0';
+                    ESP_LOGW(TAG, "Playlist(len: %d):\n%s", strlen(dest), dest);
                     // TODO: send playlist item
                     chars_stored = 0;
                 }
@@ -216,14 +215,13 @@ size_t static inline memcpy_trimmed(char* dest, int dest_size, const char* src, 
             if (prev == ',' && next == '\"')
                 continue;
             if (prev == ':') {
-                    char prev_prev = (i > 1) ? src[i - 2] : 0;
-                    if (strchr(" \"", prev_prev))
+                    char prev_prev = (chars_stored > 1) ? dest[chars_stored - 2] : 0;
+                    if (prev_prev == '\"')
                         continue;
                 }
             if (strchr(" \"[]{}", prev) || strchr(" \"[]{}", next))
                 continue;
         }
-        // TODO: analize scenario: "Foo bar: 50 greatest hits"
         dest[chars_stored++] = src[i];
     }
     return chars_stored;
