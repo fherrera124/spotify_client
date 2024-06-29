@@ -121,7 +121,7 @@ esp_err_t spotify_client_init(UBaseType_t priority)
         return ESP_FAIL;
     }
 
-    event_queue = xQueueCreate(1, sizeof(spotify_client_event_t));
+    event_queue = xQueueCreate(1, sizeof(SpotifyClientEvent_t));
     if (!event_queue) {
         ESP_LOGE(TAG, "Failed to create queue for events");
         return ESP_FAIL;
@@ -168,14 +168,14 @@ esp_err_t spotify_dispatch_event(SendEvent_t event)
     return ESP_OK;
 }
 
-void waitForQueueEvent(spotify_client_event_t* data)
+void spotify_wait_event(SpotifyClientEvent_t* data)
 {
     xQueueReceive(event_queue, data, portMAX_DELAY);
 
     // maybe we can send the DATA_PROCESSED_EVENT here
 }
 
-HttpStatus_Code player_cmd(Player_cmd_t cmd, void* payload)
+HttpStatus_Code player_cmd(PlayerCommand_t cmd, void* payload)
 {
     switch (cmd) {
     case PAUSE:

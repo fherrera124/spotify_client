@@ -38,9 +38,9 @@ void app_main(void)
     ESP_ERROR_CHECK(example_connect());
     ESP_ERROR_CHECK(spotify_client_init(5));
     spotify_dispatch_event(ENABLE_PLAYER_EVENT);
-    spotify_client_event_t data;
+    SpotifyClientEvent_t data;
     while (1) {
-        waitForQueueEvent(&data);
+        spotify_wait_event(&data);
         vTaskDelay(pdMS_TO_TICKS(2000));
         ESP_LOGW(TAG, "data procesada, emitimos eventoo");
         spotify_dispatch_event(DATA_PROCESSED_EVENT);
