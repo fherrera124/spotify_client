@@ -52,15 +52,16 @@ typedef struct {
 
 /* Locally scoped variables --------------------------------------------------*/
 static const char*            TAG = "spotify_client";
-EventGroupHandle_t            event_group;
+EventGroupHandle_t            event_group = NULL;
 static char                   http_buffer[MAX_HTTP_BUFFER];
-static char                   websocket_buffer[4096];
+static char                   ws_buffer[4096];
 static char                   sprintf_buf[SPRINTF_BUF_SIZE];
-static SemaphoreHandle_t      http_client_lock = NULL; /* Mutex to manage access to the http client handle */
+static SemaphoreHandle_t      http_buf_lock = NULL; /* Mutex to manage access to the http client buffer */
 static uint8_t                s_retries = 0; /* number of retries on error connections */
 static HttpClient_data_t      http_client = { .token.value = { 'B', 'e', 'a', 'r', 'e', 'r', ' ', '\0' } };
 static const char*            HTTP_METHOD_LOOKUP[] = { "GET", "POST", "PUT" };
 esp_websocket_client_handle_t ws_client_handle;
+static QueueHandle_t          event_queue;
 
 /* Globally scoped variables definitions -------------------------------------*/
 TrackInfo* TRACK = &(TrackInfo) { 0 }; /* pointer to an unnamed object, constructed in place
@@ -78,14 +79,14 @@ static esp_err_t       _http_event_handler(esp_http_client_event_t* evt);
 static void            player_task(void* pvParameters);
 static HttpStatus_Code confirm_ws_session(char* conn_id);
 static void            free_track(TrackInfo* track);
-static void            handle_track_fetched(TrackInfo** new_track);
+static void            handle_track_fetched(TrackInfo* new_track);
 static void            handle_err_connection();
 static void            debug_mem();
 bool                   is_player_state_changed(const char* message);
 HttpStatus_Code        http_user_playlists();
 
 /* Exported functions --------------------------------------------------------*/
-esp_err_t spotify_client_init(UBaseType_t priority, EventGroupHandle_t* event_group_ptr)
+esp_err_t spotify_client_init(UBaseType_t priority)
 {
     static esp_http_client_config_t http_cfg = {
         .url = "https://api.spotify.com/v1",
@@ -114,9 +115,15 @@ esp_err_t spotify_client_init(UBaseType_t priority, EventGroupHandle_t* event_gr
         return ESP_FAIL;
     }
 
-    http_client_lock = xSemaphoreCreateMutex();
-    if (!http_client_lock) {
+    http_buf_lock = xSemaphoreCreateMutex();
+    if (!http_buf_lock) {
         ESP_LOGE(TAG, "Error on xSemaphoreCreateMutex()");
+        return ESP_FAIL;
+    }
+
+    event_queue = xQueueCreate(1, sizeof(spotify_client_event_t));
+    if (!event_queue) {
+        ESP_LOGE(TAG, "Failed to create queue for events");
         return ESP_FAIL;
     }
 
@@ -130,7 +137,6 @@ esp_err_t spotify_client_init(UBaseType_t priority, EventGroupHandle_t* event_gr
         ESP_LOGE("EventGroup", "Failed to create event group");
         return ESP_FAIL;
     }
-    *event_group_ptr = event_group;
 
     int res = xTaskCreate(player_task, "player_task", 4096, NULL, priority, NULL);
     if (!res) {
@@ -138,6 +144,35 @@ esp_err_t spotify_client_init(UBaseType_t priority, EventGroupHandle_t* event_gr
         return ESP_FAIL;
     }
     return ESP_OK;
+}
+
+esp_err_t spotify_dispatch_event(SendEvent_t event)
+{
+    if (!event_group) {
+        ESP_LOGE(TAG, "Run spotify_client_init() first");
+        return ESP_FAIL;
+    }
+    switch (event) {
+    case ENABLE_PLAYER_EVENT:
+        xEventGroupSetBits(event_group, ENABLE_PLAYER);
+        break;
+    case DISABLE_PLAYER_EVENT:
+        xEventGroupSetBits(event_group, DISABLE_PLAYER);
+        break;
+    case DATA_PROCESSED_EVENT:
+        xEventGroupSetBits(event_group, DATA_PROCESSED);
+        break;
+    default:
+        break;
+    }
+    return ESP_OK;
+}
+
+void waitForQueueEvent(spotify_client_event_t* data)
+{
+    xQueueReceive(event_queue, data, portMAX_DELAY);
+
+    // maybe we can send the DATA_PROCESSED_EVENT here
 }
 
 HttpStatus_Code player_cmd(Player_cmd_t cmd, void* payload)
@@ -170,7 +205,7 @@ HttpStatus_Code player_cmd(Player_cmd_t cmd, void* payload)
         return 999;
     }
 
-    ACQUIRE_LOCK(http_client_lock);
+    ACQUIRE_LOCK(http_buf_lock);
     http_client.handler_cb = default_http_event_handler;
     PREPARE_CLIENT(http_client, http_client.token.value, "application/json");
 retry:
@@ -195,7 +230,7 @@ retry:
             esp_http_client_set_url(http_client.handle, http_client.endpoint);
             goto retry; // add max number of retries maybe
         }
-        RELEASE_LOCK(http_client_lock);
+        RELEASE_LOCK(http_buf_lock);
         return status_code;
     } else {
         handle_err_connection(err);
@@ -205,7 +240,7 @@ retry:
 
 HttpStatus_Code http_play_context_uri(const char* uri)
 {
-    ACQUIRE_LOCK(http_client_lock);
+    ACQUIRE_LOCK(http_buf_lock);
     int str_len = sprintf(sprintf_buf, "{\"context_uri\":\"%s\"}", uri);
     assert((str_len <= SPRINTF_BUF_SIZE) && "uri too long");
 
@@ -225,7 +260,7 @@ retry:
         ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", status_code, length);
         ESP_LOGD(TAG, "%s", http_buffer);
         esp_http_client_set_post_field(http_client.handle, NULL, 0);
-        RELEASE_LOCK(http_client_lock);
+        RELEASE_LOCK(http_buf_lock);
         return status_code;
     } else {
         handle_err_connection(err);
@@ -237,24 +272,26 @@ retry:
 static void player_task(void* pvParameters)
 {
     handler_args_t handler_args = {
-        .buffer = websocket_buffer,
+        .buffer = ws_buffer,
         .event_group = event_group
     };
     EventBits_t uxBits;
 
+    uint32_t notif;
+
     while (1) {
         uxBits = xEventGroupWaitBits(
             event_group,
-            ENABLE_PLAYER | DISABLE_PLAYER | WS_DATA_EVENT | WS_DISCONNECT_EVENT,
+            ENABLE_PLAYER | DISABLE_PLAYER | WS_DATA_EVENT | WS_DISCONNECT_EVENT | DATA_PROCESSED,
             pdTRUE,
             pdFALSE,
             portMAX_DELAY);
 
-        if ((uxBits & ENABLE_PLAYER) || (uxBits & WS_DISCONNECT_EVENT)) {
+        if (uxBits & (ENABLE_PLAYER | WS_DISCONNECT_EVENT)) {
 
             if (get_access_token() != HttpStatus_Ok) {
                 ESP_LOGE(TAG, "Error trying to get an access token");
-                xEventGroupSetBits(event_group, ERROR_EVENT);
+                // TODO: send error to queue
                 break;
             }
 
@@ -263,14 +300,14 @@ static void player_task(void* pvParameters)
             if (status_code == HttpStatus_Ok) {
                 // there is a device atached to playback,
                 // fire as a first event
-                xEventGroupSetBits(event_group, PLAYER_FIRST_EVENT);
+                // TODO: send to queue NO_PLAYER_ACTIVE_EVENT
             } else if (status_code == 204) {
                 // no device is atached to playback,
                 // fire an event of no device playing
-                xEventGroupSetBits(event_group, NO_PLAYER_ACTIVE_EVENT);
+                // TODO: send to queue NO_PLAYER_ACTIVE_EVENT
             } else {
                 ESP_LOGE(TAG, "Error trying to get player state");
-                xEventGroupSetBits(event_group, ERROR_EVENT);
+                // TODO: send error to queue
                 break;
             }
 
@@ -279,48 +316,63 @@ static void player_task(void* pvParameters)
             esp_websocket_client_set_uri(ws_client_handle, uri);
             free(uri);
             esp_websocket_register_events(ws_client_handle, WEBSOCKET_EVENT_ANY, default_ws_event_handler, &handler_args);
-            esp_websocket_client_start(ws_client_handle);
-
+            esp_err_t err = esp_websocket_client_start(ws_client_handle);
+            if (err == ESP_OK) {
+                xEventGroupSetBits(event_group, READY_FOR_DATA);
+            } else {
+                // TODO: send error to queue
+            }
         } else if (uxBits & DISABLE_PLAYER) {
             esp_websocket_client_close(ws_client_handle, portMAX_DELAY);
-
         } else if (uxBits & WS_DATA_EVENT) {
 
+            // now the ws buff is our
             // analize data of ws event
 
             char* data = NULL;
-            parseConnectionId(websocket_buffer, &data);
+            parseConnectionId(ws_buffer, &data);
 
             if (data) {
                 ESP_LOGD(TAG, "Connection id: '%s'", data);
 
                 if (confirm_ws_session(data) != HttpStatus_Ok) {
                     ESP_LOGE(TAG, "Error trying to confirm ws session");
-                    xEventGroupSetBits(event_group, ERROR_EVENT);
+                    // TODO: send error to queue
                     break;
                 }
+                xEventGroupSetBits(event_group, READY_FOR_DATA);
             } else {
-                uint32_t evt = parseWebsocketEvent(websocket_buffer, &data);
-
-                switch (evt) {
-                case PLAYER_STATE_CHANGED:
-                    xEventGroupSetBits(event_group, PLAYER_STATE_CHANGED);
-                    break;
-                case DEVICE_STATE_CHANGED:
-                    xEventGroupSetBits(event_group, DEVICE_STATE_CHANGED);
-                    break;
-                default:
-                    ESP_LOGW(TAG, "Unhandled event: '%lu'", evt);
-                    break;
-                }
+                // handle_track_fetched(track);
+                TrackInfo foo;
+                xQueueSend(event_queue, &foo, portMAX_DELAY);
             }
+        } else if (uxBits & DATA_PROCESSED) {
+            xEventGroupSetBits(event_group, READY_FOR_DATA);
+            // now the ws buff isn't our anymore
         }
+    }
+}
+
+static inline void handle_track_fetched(TrackInfo* track)
+{
+    parseTrackInfo(ws_buffer, track);
+
+    if (0 == strcmp(TRACK->name, track->name)) {
+        free_track(track);
+    } else {
+        ESP_LOGI(TAG, "Title: %s", TRACK->name);
+        StrListItem* artist = TRACK->artists.first;
+        while (artist) {
+            ESP_LOGI(TAG, "Artist: %s", artist->str);
+            artist = artist->next;
+        }
+        ESP_LOGI(TAG, "Album: %s", TRACK->album);
     }
 }
 
 HttpStatus_Code confirm_ws_session(char* conn_id)
 {
-    ACQUIRE_LOCK(http_client_lock);
+    ACQUIRE_LOCK(http_buf_lock);
     http_client.handler_cb = default_http_event_handler;
     http_client.method = HTTP_METHOD_PUT;
     char* url = http_utils_join_string("https://api.spotify.com/v1/me/notifications/player?connection_id=", 0, conn_id, 0);
@@ -337,7 +389,7 @@ retry:
         ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", status_code, length);
         free(conn_id);
         free(url);
-        RELEASE_LOCK(http_client_lock);
+        RELEASE_LOCK(http_buf_lock);
         return status_code;
     } else {
         handle_err_connection(err);
@@ -390,7 +442,7 @@ static inline void debug_mem()
 
 static HttpStatus_Code get_access_token()
 {
-    ACQUIRE_LOCK(http_client_lock);
+    ACQUIRE_LOCK(http_buf_lock);
     http_client.handler_cb = default_http_event_handler;
     http_client.method = HTTP_METHOD_GET;
     http_client.endpoint = ACCESS_TOKEN_URL;
@@ -408,7 +460,7 @@ retry:
             parseAccessToken(http_buffer, &http_client.token);
             ESP_LOGD(TAG, "Access Token obtained:\n%s", &http_client.token.value[7]);
         }
-        RELEASE_LOCK(http_client_lock);
+        RELEASE_LOCK(http_buf_lock);
         return status_code;
     } else {
         handle_err_connection(err);
@@ -418,7 +470,7 @@ retry:
 
 HttpStatus_Code http_user_playlists()
 {
-    ACQUIRE_LOCK(http_client_lock);
+    ACQUIRE_LOCK(http_buf_lock);
     http_client.handler_cb = playlists_handler;
     http_client.method = HTTP_METHOD_GET;
     http_client.endpoint = PLAYERURL("/me/playlists?offset=0&limit=50");
@@ -432,7 +484,7 @@ retry:
         HttpStatus_Code status_code = esp_http_client_get_status_code(http_client.handle);
         int             length = esp_http_client_get_content_length(http_client.handle);
         ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", status_code, length);
-        RELEASE_LOCK(http_client_lock);
+        RELEASE_LOCK(http_buf_lock);
         return status_code;
     } else {
         handle_err_connection(err);

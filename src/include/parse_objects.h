@@ -8,12 +8,10 @@ extern "C" {
 #include <stdbool.h>
 #include <time.h>
 
-#include "strlib.h"
-
+#include "spotify_client.h"
 #include "spotify_client_priv.h"
 
 /* Exported types ------------------------------------------------------------*/
-
 typedef struct {
     char*   items_string;
     StrList values;

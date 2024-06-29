@@ -16,8 +16,7 @@
 #include "spotify_client.h"
 
 /* Locally scoped variables --------------------------------------------------*/
-static const char*        TAG = "SPOTIFY_CLIENT_EXAMPLE";
-static EventGroupHandle_t event_group = NULL;
+static const char* TAG = "SPOTIFY_CLIENT_EXAMPLE";
 
 void app_main(void)
 {
@@ -37,29 +36,13 @@ void app_main(void)
      * examples/protocols/README.md for more information about this function.
      */
     ESP_ERROR_CHECK(example_connect());
-    ESP_ERROR_CHECK(spotify_client_init(5, &event_group));
-
-    EventBits_t uxBits;
-    uint32_t    mask = PLAYER_FIRST_EVENT | NO_PLAYER_ACTIVE_EVENT | PLAYER_STATE_CHANGED | DEVICE_STATE_CHANGED | ERROR_EVENT;
-    xEventGroupSetBits(event_group, ENABLE_PLAYER);
+    ESP_ERROR_CHECK(spotify_client_init(5));
+    spotify_dispatch_event(ENABLE_PLAYER_EVENT);
+    spotify_client_event_t data;
     while (1) {
-        uxBits = xEventGroupWaitBits(
-            event_group,
-            mask,
-            pdTRUE,
-            pdFALSE,
-            portMAX_DELAY);
-
-        if (uxBits & PLAYER_FIRST_EVENT) {
-            ESP_LOGI(TAG, "Event: PLAYER_FIRST_EVENT");
-        } else if (uxBits & NO_PLAYER_ACTIVE_EVENT) {
-            ESP_LOGI(TAG, "Event: NO_PLAYER_ACTIVE_EVENT");
-        } else if (uxBits & PLAYER_STATE_CHANGED) {
-            ESP_LOGI(TAG, "Event: PLAYER_STATE_CHANGED");
-        } else if (uxBits & DEVICE_STATE_CHANGED) {
-            ESP_LOGI(TAG, "Event: DEVICE_STATE_CHANGED");
-        } else if (uxBits & ERROR_EVENT) {
-            ESP_LOGI(TAG, "Event: ERROR_EVENT");
-        }
+        waitForQueueEvent(&data);
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        ESP_LOGW(TAG, "data procesada, emitimos eventoo");
+        spotify_dispatch_event(DATA_PROCESSED_EVENT);
     }
 }

@@ -20,7 +20,9 @@
 /* Private variables ---------------------------------------------------------*/
 static const char* TAG = "HANDLER_CALLBACKS";
 
-/* External variables --------------------------------------------------------*/
+/* External variables declarations -------------------------------------------*/
+// extern EventGroupHandle_t EVENT_GROUP;
+//  extern char               WS_BUFFER[];
 
 /* Private function prototypes -----------------------------------------------*/
 size_t static inline memcpy_trimmed(char* dest, int dest_size, const char* src, size_t src_len);
@@ -65,6 +67,8 @@ void default_ws_event_handler(void* handler_args, esp_event_base_t base, int32_t
 
     esp_websocket_event_data_t* data = (esp_websocket_event_data_t*)event_data;
 
+    static int lock = 0;
+
     switch (event_id) {
     case WEBSOCKET_EVENT_CONNECTED:
         ESP_LOGD(TAG, "WebSocket Connected");
@@ -80,9 +84,16 @@ void default_ws_event_handler(void* handler_args, esp_event_base_t base, int32_t
         if (data->op_code == 0xA) {
             break;
         }
-
         if (data->op_code == 0x1 || data->op_code == 0x2) {
-
+            if (!lock) {
+                xEventGroupWaitBits(
+                    event_group,
+                    READY_FOR_DATA,
+                    pdTRUE,
+                    pdFALSE,
+                    portMAX_DELAY);
+                lock = 1;
+            }
             // validamos previamente si el total de todo entrara en nuestro buffer
             if ((data->payload_len) + 1 > MAX_HTTP_BUFFER) {
                 // first fragment of message
@@ -92,17 +103,15 @@ void default_ws_event_handler(void* handler_args, esp_event_base_t base, int32_t
                 }
                 break;
             }
-
             memcpy(buffer + data->payload_offset, data->data_ptr, data->data_len);
-        }
-
-        // para saber si ya procesamos todo el mensaje
-        if (data->payload_offset + data->data_len == data->payload_len) {
-            ESP_LOGD(TAG, "Complete message received");
-            buffer[data->payload_len] = 0;
-            ESP_LOGD(TAG, "%s", buffer);
-
-            xEventGroupSetBits(event_group, WS_DATA_EVENT);
+            // para saber si ya procesamos todo el mensaje
+            if (data->payload_offset + data->data_len == data->payload_len) {
+                ESP_LOGD(TAG, "Complete message received");
+                buffer[data->payload_len] = 0;
+                ESP_LOGD(TAG, "%s", buffer);
+                lock = 0;
+                xEventGroupSetBits(event_group, WS_DATA_EVENT);
+            }
         }
 
         break;
