@@ -11,7 +11,7 @@
 #include <string.h>
 
 /* Private macro -------------------------------------------------------------*/
-#define ACCESS_TOKEN_URL    "https://discord.com/api/v8/users/@me/connections/spotify/" SPOTIFY_UID "/access-token"
+#define ACCESS_TOKEN_URL    "https://discord.com/api/v8/users/@me/connections/spotify/" CONFIG_SPOTIFY_UID "/access-token"
 #define PLAYER              "/me/player"
 #define TOKEN_URL           "https://accounts.spotify.com/api/token"
 #define PLAYING             PLAYER "?market=AR&additional_types=episode"
@@ -274,9 +274,6 @@ static void player_task(void* pvParameters)
         .event_group = event_group
     };
     EventBits_t uxBits;
-
-    uint32_t notif;
-
     while (1) {
         uxBits = xEventGroupWaitBits(
             event_group,
@@ -444,7 +441,7 @@ static HttpStatus_Code get_access_token()
     http_client.handler_cb = default_http_event_handler;
     http_client.method = HTTP_METHOD_GET;
     http_client.endpoint = ACCESS_TOKEN_URL;
-    PREPARE_CLIENT(http_client, DISCORD_TOKEN, "application/json");
+    PREPARE_CLIENT(http_client, CONFIG_DISCORD_TOKEN, "application/json");
 
 retry:
     ESP_LOGD(TAG, "Endpoint to send: %s", http_client.endpoint);
