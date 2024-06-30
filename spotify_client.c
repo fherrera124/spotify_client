@@ -1,16 +1,14 @@
 /* Includes ------------------------------------------------------------------*/
-#include <string.h>
-
-#include "credentials.h"
+#include "spotify_client.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_websocket_client.h"
 #include "handler_callbacks.h"
 #include "limits.h"
 #include "parse_objects.h"
-#include "spotify_client.h"
 #include "spotify_client_priv.h"
 #include "string_utils.h"
+#include <string.h>
 
 /* Private macro -------------------------------------------------------------*/
 #define ACCESS_TOKEN_URL    "https://discord.com/api/v8/users/@me/connections/spotify/" SPOTIFY_UID "/access-token"
