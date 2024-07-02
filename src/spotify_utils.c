@@ -60,31 +60,25 @@ void spotify_free_nodes(List* list)
         switch (list->type) {
         case STRING_LIST:
             free(node->data);
-            aux = node->next;
-            free(node);
-            node = aux;
             break;
         case PLAYLIST_LIST:
             PlaylistItem_t* playlist_item = node->data;
             free(playlist_item->name);
             free(playlist_item->uri);
             free(playlist_item);
-            aux = node->next;
-            free(node);
-            node = aux;
             break;
         case DEVICE_LIST:
             DeviceItem_t* device_item = node->data;
             free(device_item->name);
             free(device_item->id);
             free(device_item);
-            aux = node->next;
-            free(node);
-            node = aux;
             break;
         default:
             return;
         }
+        aux = node->next;
+        free(node);
+        node = aux;
     }
     list->first = NULL;
     list->last = NULL;

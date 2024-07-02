@@ -19,9 +19,9 @@ dependencies:
   spotify_client:
     component_hash: null
     source:
-      path: C:\Users\franh\source\repos\spotify_client
+      path: C:\Users\franh\source\repos\esp32-components\spotify_client
       type: local
     version: '*'
-manifest_hash: 174749d38febe2a14fdbbbd5ca64e4019187c656b6464afbf1e6a9b44c8d7dcb
+manifest_hash: 4a7ab9e4b046393d019aa6de1e1d586b647b4038c67c70e60e1c90747a2f651f
 target: esp32
 version: 1.0.0
