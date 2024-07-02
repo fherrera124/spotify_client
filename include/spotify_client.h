@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../lib/include/strlib.h"
 #include "esp_http_client.h"
+#include "spotify_utils.h"
 
 /* Exported macro ------------------------------------------------------------*/
 
@@ -34,20 +34,18 @@ typedef struct
 
 typedef struct
 {
-    char*   name;
-    StrList artists;
-    char*   album;
-    time_t  duration_ms;
-    time_t  progress_ms;
-    bool    isPlaying : 1;
-    Device  device;
+    char*  name;
+    List   artists;
+    char*  album;
+    time_t duration_ms;
+    time_t progress_ms;
+    bool   isPlaying : 1;
+    Device device;
 } TrackInfo;
 
 typedef struct {
-    Event_t foo;
-    union {
-        TrackInfo trackInfo;
-    };
+    Event_t event;
+    void*   payload;
 } SpotifyClientEvent_t;
 
 typedef enum {
@@ -65,3 +63,5 @@ esp_err_t       spotify_dispatch_event(SendEvent_t event);
 void            spotify_wait_event(SpotifyClientEvent_t* event);
 HttpStatus_Code player_cmd(PlayerCommand_t event, void* payload);
 HttpStatus_Code http_play_context_uri(const char* uri);
+List*           spotify_user_playlists();
+List*           spotify_available_devices();

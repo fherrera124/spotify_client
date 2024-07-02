@@ -21,8 +21,6 @@ extern "C" {
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
-#include "strlib.h"
-
 /* Exported macro ------------------------------------------------------------*/
 #define MAX_HTTP_BUFFER 8192
 // eventgroup macros
