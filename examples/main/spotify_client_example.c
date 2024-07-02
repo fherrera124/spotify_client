@@ -1,19 +1,15 @@
-#include "esp_log.h"
-#include "nvs_flash.h"
-#include "protocol_examples_common.h"
-#include <stdio.h>
-
-#include "freertos/FreeRTOS.h"
-#include "freertos/event_groups.h"
-#include "freertos/semphr.h"
-#include "freertos/task.h"
-
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/event_groups.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "nvs_flash.h"
+#include "protocol_examples_common.h"
 #include "spotify_client.h"
+#include <stdio.h>
 
 /* Locally scoped variables --------------------------------------------------*/
 static const char* TAG = "SPOTIFY_CLIENT_EXAMPLE";
