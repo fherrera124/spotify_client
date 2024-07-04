@@ -7,14 +7,15 @@
 
 /* Exported types ------------------------------------------------------------*/
 typedef enum {
+    PLAYER_STATE_CHANGED,
+    DEVICE_STATE_CHANGED,
     ACTIVE_DEVICES_FOUND,
     NO_ACTIVE_DEVICES,
     LAST_DEVICE_FAILED,
-    PLAYLISTS_ERROR,
-    PLAYLISTS_OK,
     VOLUME_CHANGED,
     TRANSFERRED_OK,
-    TRANSFERRED_FAIL
+    TRANSFERRED_FAIL,
+    UNKNOW
 } Event_t;
 
 typedef enum {
@@ -34,6 +35,7 @@ typedef struct
 
 typedef struct
 {
+    char*  id;
     char*  name;
     List   artists;
     char*  album;
@@ -58,10 +60,10 @@ typedef enum {
 } PlayerCommand_t;
 
 /* Exported functions prototypes ---------------------------------------------*/
-esp_err_t       spotify_client_init(UBaseType_t priority);
-esp_err_t       spotify_dispatch_event(SendEvent_t event);
-void            spotify_wait_event(SpotifyClientEvent_t* event);
-HttpStatus_Code player_cmd(PlayerCommand_t event, void* payload);
-HttpStatus_Code http_play_context_uri(const char* uri);
-List*           spotify_user_playlists();
-List*           spotify_available_devices();
+esp_err_t spotify_client_init(UBaseType_t priority);
+esp_err_t spotify_dispatch_event(SendEvent_t event);
+void      spotify_wait_event(SpotifyClientEvent_t* event);
+esp_err_t player_cmd(PlayerCommand_t cmd, void* payload, HttpStatus_Code* status_code);
+esp_err_t http_play_context_uri(const char* uri, HttpStatus_Code* status_code);
+List*     spotify_user_playlists();
+List*     spotify_available_devices();

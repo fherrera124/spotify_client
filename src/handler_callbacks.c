@@ -72,6 +72,10 @@ void default_ws_handler_cb(void* handler_args, esp_event_base_t base, int32_t ev
         ESP_LOGD(TAG, "WebSocket Disconnected");
         xEventGroupSetBits(event_group, WS_DISCONNECT_EVENT);
         break;
+    case WEBSOCKET_EVENT_CLOSED:
+        ESP_LOGD(TAG, "WebSocket Closed cleanly");
+        xEventGroupSetBits(event_group, WS_DISCONNECT_EVENT);
+        break;
     case WEBSOCKET_EVENT_DATA:
         ESP_LOGD(TAG, "WebSocket Data Received: Opcode=%d, Length=%d", data->op_code, data->data_len);
 

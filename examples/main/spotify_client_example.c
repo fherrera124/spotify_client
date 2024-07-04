@@ -32,6 +32,7 @@ void app_main(void)
      * examples/protocols/README.md for more information about this function.
      */
     ESP_ERROR_CHECK(example_connect());
+
     ESP_ERROR_CHECK(spotify_client_init(5));
 
     // obtain the user playlists
@@ -73,7 +74,8 @@ void app_main(void)
     SpotifyClientEvent_t event;
     while (1) {
         spotify_wait_event(&event);
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        ESP_LOGI(TAG, "Event type: %d", event.event);
+        //vTaskDelay(pdMS_TO_TICKS(1000));
         ESP_LOGI(TAG, "Sending event that the event was processed");
         spotify_dispatch_event(DATA_PROCESSED_EVENT);
     }

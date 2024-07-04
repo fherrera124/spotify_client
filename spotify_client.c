@@ -57,35 +57,32 @@ static SemaphoreHandle_t      http_buf_lock = NULL; /* Mutex to manage access to
 static uint8_t                s_retries = 0; /* number of retries on error connections */
 AccessToken                   access_token = { .value = "Bearer " };
 static HttpClient_data_t      http_client = { 0 };
-static const char*            HTTP_METHOD_LOOKUP[] = { "GET", "POST", "PUT" };
 esp_websocket_client_handle_t ws_client_handle;
 static QueueHandle_t          event_queue;
 List                          playlists = { .type = PLAYLIST_LIST };
 List                          devices = { .type = DEVICE_LIST };
-
-/* Globally scoped variables definitions -------------------------------------*/
-TrackInfo* TRACK = &(TrackInfo) { 0 }; /* pointer to an unnamed object, constructed in place
+TrackInfo*                    track_info = &(TrackInfo) { 0 }; /* pointer to an unnamed object, constructed in place
 by the the COMPOUND LITERAL expression "(TrackInfo) { 0 }". NOTE: Although the syntax of a compound
 literal is similar to a cast, the important distinction is that a cast is a non-lvalue expression
 while a compound literal is an lvalue */
+
+/* Globally scoped variables definitions -------------------------------------*/
 
 /* External variables --------------------------------------------------------*/
 extern const char certs_pem_start[] asm("_binary_certs_pem_start");
 extern const char certs_pem_end[] asm("_binary_certs_pem_end");
 
 /* Private function prototypes -----------------------------------------------*/
-static HttpStatus_Code get_access_token();
-static esp_err_t       _http_event_handler(esp_http_client_event_t* evt);
-static void            player_task(void* pvParameters);
-static HttpStatus_Code confirm_ws_session(char* conn_id);
-static void            free_track(TrackInfo* track);
-static void            handle_track_fetched(TrackInfo* new_track);
-static void            handle_err_connection();
-static void            debug_mem();
-bool                   is_player_state_changed(const char* message);
-HttpStatus_Code        http_user_playlists();
-void                   playlists_handler_cb(char* dest, esp_http_client_event_t* evt);
-bool                   access_token_empty();
+static esp_err_t get_access_token();
+static esp_err_t _http_event_handler(esp_http_client_event_t* evt);
+static void      player_task(void* pvParameters);
+static esp_err_t confirm_ws_session(char* conn_id);
+static void      free_track(TrackInfo* track_info);
+static void      handle_track_fetched(TrackInfo* new_track);
+static esp_err_t http_retries_available(esp_err_t err);
+static void      debug_mem();
+static void      playlists_handler_cb(char* dest, esp_http_client_event_t* evt);
+static bool      access_token_empty();
 
 /* Exported functions --------------------------------------------------------*/
 esp_err_t spotify_client_init(UBaseType_t priority)
@@ -103,8 +100,8 @@ esp_err_t spotify_client_init(UBaseType_t priority)
         .ping_interval_sec = 30,
     };
 
-    CALLOC(TRACK->name, 1);
-    TRACK->artists.type = STRING_LIST;
+    CALLOC(track_info->name, 1);
+    track_info->artists.type = STRING_LIST;
 
     http_client.handle = esp_http_client_init(&http_cfg);
     if (!http_client.handle) {
@@ -131,8 +128,6 @@ esp_err_t spotify_client_init(UBaseType_t priority)
     }
 
     http_client.handler_cb = default_http_handler_cb;
-
-    init_functions_cb();
 
     event_group = xEventGroupCreate();
 
@@ -167,7 +162,8 @@ esp_err_t spotify_dispatch_event(SendEvent_t event)
         xEventGroupSetBits(event_group, DATA_PROCESSED);
         break;
     default:
-        break;
+        ESP_LOGE(TAG, "Unknown event: %d", event);
+        return ESP_FAIL;
     }
     return ESP_OK;
 }
@@ -181,8 +177,16 @@ void spotify_wait_event(SpotifyClientEvent_t* event)
     // maybe we can send the DATA_PROCESSED_EVENT here
 }
 
-HttpStatus_Code player_cmd(PlayerCommand_t cmd, void* payload)
+// ok
+esp_err_t player_cmd(PlayerCommand_t cmd, void* payload, HttpStatus_Code* status_code)
 {
+    esp_err_t       err;
+    HttpStatus_Code s_code = 0;
+    if (access_token_empty()) {
+        if ((err = get_access_token()) != ESP_OK) {
+            goto exit;
+        }
+    }
     switch (cmd) {
     case PAUSE:
         http_client.method = HTTP_METHOD_PUT;
@@ -207,48 +211,48 @@ HttpStatus_Code player_cmd(PlayerCommand_t cmd, void* payload)
         http_client.endpoint = PLAYERURL(PLAYER);
         break;
     default:
-        ESP_LOGE(TAG, "Unknow command");
-        return 999;
+        ESP_LOGE(TAG, "Unknow command: %d", cmd);
+        err = ESP_FAIL;
+        goto exit;
     }
-
     ACQUIRE_LOCK(http_buf_lock);
     http_client.handler_cb = default_http_handler_cb;
     PREPARE_CLIENT(http_client, access_token.value, "application/json");
 retry:
     ESP_LOGD(TAG, "Endpoint to send: %s", http_client.endpoint);
-    esp_err_t err = esp_http_client_perform(http_client.handle);
-    if (err == ESP_OK) {
+    if ((err = esp_http_client_perform(http_client.handle)) == ESP_OK) {
         s_retries = 0;
-        HttpStatus_Code status_code = esp_http_client_get_status_code(http_client.handle);
-        int             length = esp_http_client_get_content_length(http_client.handle);
-        ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", status_code, length);
+        s_code = esp_http_client_get_status_code(http_client.handle);
+        int length = esp_http_client_get_content_length(http_client.handle);
+        ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", s_code, length);
         ESP_LOGD(TAG, "%s", http_buffer);
-
-        /* If for any reason, we dont have the actual state
-         * of the player, then when sending play command when
-         * paused, or viceversa, we receive error 403. */
-        if (status_code == HttpStatus_Forbidden) {
-            if (cmd == PLAY) {
-                http_client.endpoint = PLAYERURL(PAUSE_TRACK);
-            } else if (cmd == PAUSE) {
-                http_client.endpoint = PLAYERURL(PLAY_TRACK);
-            }
-            esp_http_client_set_url(http_client.handle, http_client.endpoint);
-            goto retry; // add max number of retries maybe
-        }
         RELEASE_LOCK(http_buf_lock);
-        return status_code;
-    } else {
-        handle_err_connection(err);
+        goto exit;
+    } else if (http_retries_available(err) == ESP_OK) {
         goto retry;
+    } else {
+        goto exit;
     }
+exit:
+    if (status_code) {
+        *status_code = s_code;
+    }
+    return err;
 }
 
-HttpStatus_Code http_play_context_uri(const char* uri)
+// ok
+esp_err_t http_play_context_uri(const char* uri, HttpStatus_Code* status_code)
 {
+    esp_err_t       err;
+    HttpStatus_Code s_code = 0;
+    if (access_token_empty()) {
+        if ((err = get_access_token()) != ESP_OK) {
+            goto exit;
+        }
+    }
     ACQUIRE_LOCK(http_buf_lock);
     int str_len = sprintf(sprintf_buf, "{\"context_uri\":\"%s\"}", uri);
-    assert((str_len <= SPRINTF_BUF_SIZE) && "uri too long");
+    assert(str_len <= SPRINTF_BUF_SIZE);
 
     http_client.handler_cb = default_http_handler_cb;
     http_client.method = HTTP_METHOD_PUT;
@@ -258,26 +262,31 @@ HttpStatus_Code http_play_context_uri(const char* uri)
     PREPARE_CLIENT(http_client, access_token.value, "application/json");
 retry:
     ESP_LOGD(TAG, "Endpoint to send: %s", http_client.endpoint);
-    esp_err_t       err = esp_http_client_perform(http_client.handle);
-    HttpStatus_Code status_code = esp_http_client_get_status_code(http_client.handle);
-    if (err == ESP_OK) {
+    if ((err = esp_http_client_perform(http_client.handle)) == ESP_OK) {
         s_retries = 0;
-        int length = esp_http_client_get_content_length(http_client.handle);
-        ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", status_code, length);
+        HttpStatus_Code s_code = esp_http_client_get_status_code(http_client.handle);
+        int             length = esp_http_client_get_content_length(http_client.handle);
+        ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", s_code, length);
         ESP_LOGD(TAG, "%s", http_buffer);
         esp_http_client_set_post_field(http_client.handle, NULL, 0);
         RELEASE_LOCK(http_buf_lock);
-        return status_code;
-    } else {
-        handle_err_connection(err);
+        goto exit;
+    } else if (http_retries_available(err) == ESP_OK) {
         goto retry;
+    } else {
+        goto exit;
     }
+exit:
+    if (status_code) {
+        *status_code = s_code;
+    }
+    return err;
 }
 
 List* spotify_user_playlists()
 {
     if (access_token_empty()) {
-        get_access_token();
+        ESP_ERROR_CHECK(get_access_token());
     }
     ACQUIRE_LOCK(http_buf_lock);
     http_client.handler_cb = playlists_handler_cb;
@@ -299,16 +308,17 @@ retry:
         }
         RELEASE_LOCK(http_buf_lock);
         return &playlists;
-    } else {
-        handle_err_connection(err);
+    } else if (http_retries_available(err) == ESP_OK) {
         goto retry;
+    } else {
+        return &playlists;
     }
 }
 
 List* spotify_available_devices()
 {
     if (access_token_empty()) {
-        get_access_token();
+        ESP_ERROR_CHECK(get_access_token());
     }
     ACQUIRE_LOCK(http_buf_lock);
     http_client.handler_cb = default_http_handler_cb;
@@ -332,9 +342,10 @@ retry:
         parse_available_devices(http_buffer, &devices);
         RELEASE_LOCK(http_buf_lock);
         return &devices;
-    } else {
-        handle_err_connection(err);
+    } else if (http_retries_available(err) == ESP_OK) {
         goto retry;
+    } else {
+        return &devices;
     }
 }
 
@@ -345,6 +356,7 @@ static void player_task(void* pvParameters)
         .buffer = ws_buffer,
         .event_group = event_group
     };
+    int         first_msg = 1;
     EventBits_t uxBits;
     while (1) {
         uxBits = xEventGroupWaitBits(
@@ -355,25 +367,21 @@ static void player_task(void* pvParameters)
             portMAX_DELAY);
 
         if (uxBits & (ENABLE_PLAYER | WS_DISCONNECT_EVENT)) {
-
-            if (get_access_token() != HttpStatus_Ok) {
-                ESP_LOGE(TAG, "Error trying to get an access token");
-                // TODO: send error to queue
-                break;
-            }
-
+            first_msg = 1;
+            ESP_ERROR_CHECK(get_access_token());
             // initial state
-            HttpStatus_Code status_code = player_cmd(GET_STATE, NULL);
+            HttpStatus_Code status_code;
+            ESP_ERROR_CHECK(player_cmd(GET_STATE, NULL, &status_code));
             if (status_code == HttpStatus_Ok) {
                 // there is a device atached to playback,
                 // fire as a first event
-                // TODO: send to queue NO_PLAYER_ACTIVE_EVENT
+                // TODO: send to queue FIRST_EVENT
             } else if (status_code == 204) {
                 // no device is atached to playback,
                 // fire an event of no device playing
                 // TODO: send to queue NO_PLAYER_ACTIVE_EVENT
             } else {
-                ESP_LOGE(TAG, "Error trying to get player state");
+                ESP_LOGE(TAG, "Error trying to get player state. Status code: %d", status_code);
                 // TODO: send error to queue
                 break;
             }
@@ -396,22 +404,21 @@ static void player_task(void* pvParameters)
             // now the ws buff is our
             // analize data of ws event
 
-            char* data = NULL;
-            parseConnectionId(ws_buffer, &data);
-
-            if (data) {
-                ESP_LOGD(TAG, "Connection id: '%s'", data);
-
-                if (confirm_ws_session(data) != HttpStatus_Ok) {
-                    ESP_LOGE(TAG, "Error trying to confirm ws session");
-                    // TODO: send error to queue
-                    break;
-                }
+            if (first_msg) {
+                first_msg = 0;
+                char* conn_id = NULL;
+                parse_connection_id(ws_buffer, &conn_id);
+                assert(conn_id);
+                ESP_LOGD(TAG, "Connection id: '%s'", conn_id);
+                ESP_ERROR_CHECK(confirm_ws_session(conn_id));
                 xEventGroupSetBits(event_group, READY_FOR_DATA);
             } else {
-                // handle_track_fetched(track);
-                TrackInfo foo;
-                xQueueSend(event_queue, &foo, portMAX_DELAY);
+                SpotifyClientEvent_t spotify_evt = parse_ws_event(ws_buffer, &track_info);
+                if (spotify_evt.event == PLAYER_STATE_CHANGED) {
+                    // ESP_LOGW(TAG, "%s", ws_buffer);
+                    // handle_track_fetched(track);
+                }
+                xQueueSend(event_queue, &spotify_evt, portMAX_DELAY);
             }
         } else if (uxBits & DATA_PROCESSED) {
             xEventGroupSetBits(event_group, READY_FOR_DATA);
@@ -422,22 +429,22 @@ static void player_task(void* pvParameters)
 
 static inline void handle_track_fetched(TrackInfo* track)
 {
-    parseTrackInfo(ws_buffer, track);
+    // parseTrackInfo(ws_buffer, track); DELETED
 
-    if (0 == strcmp(TRACK->name, track->name)) {
+    if (0 == strcmp(track_info->name, track->name)) {
         free_track(track);
     } else {
-        ESP_LOGI(TAG, "Title: %s", TRACK->name);
-        Node* node = TRACK->artists.first;
+        ESP_LOGI(TAG, "Title: %s", track_info->name);
+        Node* node = track_info->artists.first;
         while (node) {
             ESP_LOGI(TAG, "Artist: %s", (char*)node->data);
             node = node->next;
         }
-        ESP_LOGI(TAG, "Album: %s", TRACK->album);
+        ESP_LOGI(TAG, "Album: %s", track_info->album);
     }
 }
 
-HttpStatus_Code confirm_ws_session(char* conn_id)
+static esp_err_t confirm_ws_session(char* conn_id)
 {
     ACQUIRE_LOCK(http_buf_lock);
     http_client.handler_cb = default_http_handler_cb;
@@ -445,7 +452,6 @@ HttpStatus_Code confirm_ws_session(char* conn_id)
     char* url = http_utils_join_string("https://api.spotify.com/v1/me/notifications/player?connection_id=", 0, conn_id, 0);
     http_client.endpoint = url; // esp_http_client_set_url(http_client.handle, url);
     PREPARE_CLIENT(http_client, access_token.value, "application/json");
-
 retry:
     ESP_LOGD(TAG, "Endpoint to send: %s", http_client.endpoint);
     esp_err_t err = esp_http_client_perform(http_client.handle);
@@ -457,22 +463,27 @@ retry:
         free(conn_id);
         free(url);
         RELEASE_LOCK(http_buf_lock);
-        return status_code;
-    } else {
-        handle_err_connection(err);
+        return (status_code == HttpStatus_Ok) ? ESP_OK : ESP_FAIL;
+    } else if (http_retries_available(err) == ESP_OK) {
         goto retry;
+    } else {
+        return err;
     }
 }
 
-static inline void handle_err_connection(esp_err_t err)
+static inline esp_err_t http_retries_available(esp_err_t err)
 {
+    static const char* HTTP_METHOD_LOOKUP[] = { "GET", "POST", "PUT" };
     ESP_LOGE(TAG, "HTTP %s request failed: %s",
         HTTP_METHOD_LOOKUP[http_client.method],
         esp_err_to_name(err));
-    assert((++s_retries <= RETRIES_ERR_CONN) && "Restarting...");
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    ESP_LOGW(TAG, "Retrying %d/%d...", s_retries, RETRIES_ERR_CONN);
-    debug_mem();
+    if (++s_retries <= RETRIES_ERR_CONN) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        ESP_LOGW(TAG, "Retrying %d/%d...", s_retries, RETRIES_ERR_CONN);
+        debug_mem();
+        return ESP_OK;
+    }
+    return ESP_FAIL;
 }
 
 static esp_err_t _http_event_handler(esp_http_client_event_t* evt)
@@ -505,8 +516,9 @@ static inline void debug_mem()
     ESP_LOGI(TAG, "free heap size: %lu", esp_get_free_heap_size());
 }
 
-static HttpStatus_Code get_access_token()
+static esp_err_t get_access_token()
 {
+    esp_err_t err;
     ACQUIRE_LOCK(http_buf_lock);
     http_client.handler_cb = default_http_handler_cb;
     http_client.method = HTTP_METHOD_GET;
@@ -515,25 +527,23 @@ static HttpStatus_Code get_access_token()
 
 retry:
     ESP_LOGD(TAG, "Endpoint to send: %s", http_client.endpoint);
-    esp_err_t err = esp_http_client_perform(http_client.handle);
-    if (err == ESP_OK) {
+    if ((err = esp_http_client_perform(http_client.handle)) == ESP_OK) {
         s_retries = 0;
         HttpStatus_Code status_code = esp_http_client_get_status_code(http_client.handle);
         int             length = esp_http_client_get_content_length(http_client.handle);
         ESP_LOGD(TAG, "HTTP Status Code = %d, content_length = %d", status_code, length);
         if (status_code == HttpStatus_Ok) {
-            parseAccessToken(http_buffer, &access_token);
+            parse_access_token(http_buffer, access_token.value + 7, 400 - 7);
             ESP_LOGD(TAG, "Access Token obtained:\n%s", &access_token.value[7]);
-        } else {
-            ESP_LOGE(TAG, "Error trying to obtain an access token. Status code: %d", status_code);
-            // invalidate the access token
-            access_token.value[7] = 0;
+            RELEASE_LOCK(http_buf_lock);
+            return ESP_OK;
         }
-        RELEASE_LOCK(http_buf_lock);
-        return status_code;
-    } else {
-        handle_err_connection(err);
+        ESP_LOGE(TAG, "Error trying to obtain an access token. Status code: %d", status_code);
+        return ESP_FAIL;
+    } else if (http_retries_available(err) == ESP_OK) {
         goto retry;
+    } else {
+        return err;
     }
 }
 
@@ -542,22 +552,18 @@ retry:
  * approach is to process the "items" array one playlist at a time.
  *
  */
-void playlists_handler_cb(char* dest, esp_http_client_event_t* evt)
+static void playlists_handler_cb(char* dest, esp_http_client_event_t* evt)
 {
     static const char* items_key = "\"items\"";
     static int         chars_stored = 0; // Number of chars stored in buffer
     static int         in_items = 0; // Bandera para indicar si estamos dentro del arreglo "items"
     static int         brace_count = 0; // Contador de llaves para detectar el final de un elemento
-    static esp_err_t   err = ESP_OK;
 
     char* src = (char*)evt->data;
     int   src_len = evt->data_len;
 
     switch (evt->event_id) {
     case HTTP_EVENT_ON_DATA:
-        if (err == ESP_FAIL) {
-            return;
-        }
         if (!in_items) {
             char* match_found = memmem(src, src_len, items_key, strlen(items_key));
             if (!match_found)
@@ -581,7 +587,6 @@ void playlists_handler_cb(char* dest, esp_http_client_event_t* evt)
                 if (strchr(" \"[]{}", prev) || strchr(" \"[]{}", next))
                     continue;
             }
-
             if (src[i] == '{') {
                 if (brace_count == 0) {
                     // Start of new playlist
@@ -590,43 +595,36 @@ void playlists_handler_cb(char* dest, esp_http_client_event_t* evt)
                 brace_count++;
             }
             if (brace_count > 0) {
-                if (chars_stored < MAX_HTTP_BUFFER - 1) {
-                    dest[chars_stored++] = src[i];
-                } else {
-                    ESP_LOGE(TAG, "Buffer overflow, data will be truncated!");
-                    dest[chars_stored] = '\0';
-                    err = ESP_FAIL; // TODO: unnecessary, this is an unrecoverable error
-                    return;
-                }
+                assert(chars_stored < MAX_HTTP_BUFFER - 1);
+                dest[chars_stored++] = src[i];
             }
             if (src[i] == '}') {
                 brace_count--;
                 if (brace_count == 0) {
                     // End of playlist
                     dest[chars_stored] = '\0';
-                    ESP_LOGD(TAG, "Playlist(len: %d):\n%s", strlen(dest), dest);
+                    ESP_LOGD(TAG, "Playlist (len: %d):\n%s", strlen(dest), dest);
                     PlaylistItem_t* item = malloc(sizeof(item));
-                    assert(item && "Error allocating memory");
+                    assert(item);
                     parse_playlist(http_buffer, item);
-                    Node* node = spotify_append_item_to_list(&playlists, (void*)item);
-                    assert(node && "Error allocating memory");
+                    assert(spotify_append_item_to_list(&playlists, (void*)item));
                     chars_stored = 0;
                 }
             }
         }
         break;
     case HTTP_EVENT_ON_FINISH:
-        chars_stored = in_items = brace_count = err = 0;
+        chars_stored = in_items = brace_count = 0;
         break;
     case HTTP_EVENT_DISCONNECTED:
-        chars_stored = in_items = brace_count = err = 0;
+        chars_stored = in_items = brace_count = 0;
         break;
     default:
         break;
     }
 }
 
-bool access_token_empty()
+static inline bool access_token_empty()
 {
     return strlen(access_token.value) == 7;
 }

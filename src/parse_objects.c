@@ -1,136 +1,117 @@
 /* Includes ------------------------------------------------------------------*/
+#include "parse_objects.h"
+#include "esp_log.h"
+#include "json_parser.h"
+#include "spotify_client_priv.h"
 #include <stdlib.h>
 #include <string.h>
 
-#include "esp_log.h"
-#include "jsmn.h"
-#include "parse_objects.h"
-#include "spotify_client_priv.h"
-
 /* Private macro -------------------------------------------------------------*/
-#define TRACK_CALLBACKS_SIZE  6
-#define TOKENS_CALLBACKS_SIZE 2
-#define MAX_TOKENS            500
-#define PLAYLISTS_TOKENS      200
-#define DEVICES_TOKENS        200
+#define MAX_TOKENS 500
+
+// early check of unrecoverable error
+#define ERR_CHECK(x) ESP_ERROR_CHECK(x)
 
 /* Private types -------------------------------------------------------------*/
-typedef void (*PathCb)(const char*, jsmntok_t*, void*);
 
 /* Private function prototypes -----------------------------------------------*/
-static void       onDevicePlaying(const char* js, jsmntok_t* root, void* obj);
-static void       onTrackName(const char* js, jsmntok_t* root, void* obj);
-static void       onArtistsName(const char* js, jsmntok_t* root, void* obj);
-static void       onAlbumName(const char* js, jsmntok_t* root, void* obj);
-static void       onTrackIsPlaying(const char* js, jsmntok_t* root, void* obj);
-static void       onTrackTime(const char* js, jsmntok_t* root, void* obj);
-static void       onAccessToken(const char* js, jsmntok_t* root, void* obj);
-static void       onExpiresIn(const char* js, jsmntok_t* root, void* obj);
-static inline int natoi(const char* str, short len);
-static void       parsejson(const char* js, PathCb* callbacks, size_t callbacksSize, void* obj);
 
 /* Locally scoped variables --------------------------------------------------*/
 static const char* TAG = "PARSE_OBJECT";
-PathCb             trackCallbacks[TRACK_CALLBACKS_SIZE];
-PathCb             tokensCallbacks[TOKENS_CALLBACKS_SIZE];
-static jsmntok_t   tokens[MAX_TOKENS];
+static json_tok_t  tokens[MAX_TOKENS];
 
 /* Globally scoped variables definitions -------------------------------------*/
 
 /* Exported functions --------------------------------------------------------*/
-void init_functions_cb()
+void parse_access_token(const char* js, char* access_token, int size)
 {
-    trackCallbacks[0] = onTrackName;
-    trackCallbacks[1] = onArtistsName;
-    trackCallbacks[2] = onAlbumName;
-    trackCallbacks[3] = onTrackIsPlaying;
-    trackCallbacks[4] = onTrackTime;
-    trackCallbacks[5] = onDevicePlaying;
-
-    tokensCallbacks[0] = onAccessToken;
-    tokensCallbacks[1] = onExpiresIn;
-}
-
-void parseTrackInfo(const char* js, TrackInfo* track)
-{
-    parsejson(js, trackCallbacks, TRACK_CALLBACKS_SIZE, track);
-}
-
-/* void parseTokens(const char* js, AccessToken* token)
-{
-    parsejson(js, tokensCallbacks, TOKENS_CALLBACKS_SIZE, token);
-} */
-
-void parseAccessToken(const char* js, AccessToken* token)
-{
-    PathCb cb = onAccessToken;
-    parsejson(js, &cb, 1, token);
+    jparse_ctx_t jctx;
+    ERR_CHECK(json_parse_start_static(&jctx, js, strlen(js), tokens, MAX_TOKENS));
+    ERR_CHECK(json_obj_get_string(&jctx, "access_token", access_token, size));
+    json_parse_end_static(&jctx);
 }
 
 void parse_available_devices(const char* js, List* devices_list)
 {
-    jsmn_parser jsmn;
-    jsmn_init(&jsmn);
-
-    jsmnerr_t n = jsmn_parse(&jsmn, js, strlen(js), tokens, DEVICES_TOKENS);
-    if (n < 0) {
-        ESP_LOGE(TAG, "%s", error_str(n));
-        abort();
-    }
-
-    jsmntok_t* devices = object_get_member(js, tokens, "devices");
-    assert(devices && "key \"devices\" missing");
-
-    if (devices->size == 0) {
-        return;
-    }
-
-    for (uint16_t i = 0; i < devices->size; i++) {
+    jparse_ctx_t jctx;
+    ERR_CHECK(json_parse_start_static(&jctx, js, strlen(js), tokens, MAX_TOKENS));
+    int num_elem;
+    ERR_CHECK(json_obj_get_array(&jctx, "devices", &num_elem));
+    for (int i = 0; i < num_elem; i++) {
+        json_arr_get_object(&jctx, i);
         DeviceItem_t* item = malloc(sizeof(*item));
-        assert(item && "Error allocating memory");
-        
-        jsmntok_t* device = array_get_at(devices, i);
-        assert(device && "array_get_at() failed. Maybe not an array");
-
-        jsmntok_t* value = object_get_member(js, device, "name");
-        assert(value && "key \"name\" missing");
-        item->name = jsmn_obj_dup(js, value);
-        assert(item->name && "jsmn_obj_dup() failed. Error allocating memory");
-
-        value = object_get_member(js, device, "id");
-        assert(value && "key \"id\" missing");
-        item->id = jsmn_obj_dup(js, value);
-        assert(item->id && "jsmn_obj_dup() failed. Error allocating memory");
-
-        Node* node = spotify_append_item_to_list(devices_list, (void*)item);
-        assert(node && "Error allocating memory for node");
+        assert(item);
+        ERR_CHECK(json_obj_dup_string(&jctx, "name", &item->name));
+        ERR_CHECK(json_obj_dup_string(&jctx, "id", &item->id));
+        assert(spotify_append_item_to_list(devices_list, (void*)item));
+        ERR_CHECK(json_arr_leave_object(&jctx));
     }
+    json_parse_end_static(&jctx);
 }
 
 void parse_playlist(const char* js, PlaylistItem_t* playlist_item)
 {
-    jsmn_parser jsmn;
-    jsmn_init(&jsmn);
+    jparse_ctx_t jctx;
+    ERR_CHECK(json_parse_start_static(&jctx, js, strlen(js), tokens, MAX_TOKENS));
+    ERR_CHECK(json_obj_dup_string(&jctx, "name", &playlist_item->name));
+    ERR_CHECK(json_obj_dup_string(&jctx, "uri", &playlist_item->uri));
+    json_parse_end_static(&jctx);
+}
 
-    jsmnerr_t n = jsmn_parse(&jsmn, js, strlen(js), tokens, PLAYLISTS_TOKENS);
-    if (n < 0) {
-        ESP_LOGE(TAG, "%s", error_str(n));
-        abort();
+void parse_connection_id(const char* js, char** data)
+{
+    jparse_ctx_t jctx;
+    ERR_CHECK(json_parse_start_static(&jctx, js, strlen(js), tokens, MAX_TOKENS));
+    ERR_CHECK(json_obj_get_object(&jctx, "headers"));
+    ERR_CHECK(json_obj_dup_string(&jctx, "Spotify-Connection-Id", data));
+    json_parse_end_static(&jctx);
+}
+
+SpotifyClientEvent_t parse_ws_event(const char* js, TrackInfo** track_info)
+{
+    // ESP_LOGW(TAG, "%s", js);
+
+    SpotifyClientEvent_t spotify_evt = { 0 };
+
+    jparse_ctx_t jctx;
+    ERR_CHECK(json_parse_start_static(&jctx, js, strlen(js), tokens, MAX_TOKENS));
+
+    int num_elem;
+    ERR_CHECK(json_obj_get_array(&jctx, "payloads", &num_elem));
+    // TODO: check if the array is greater than one
+    ERR_CHECK(json_arr_get_object(&jctx, 0));
+    ERR_CHECK(json_obj_get_array(&jctx, "events", &num_elem));
+    // TODO: check if the array is greater than one
+    ERR_CHECK(json_arr_get_object(&jctx, 0));
+    // json_tok_t* t = jctx.cur;
+    // printf("token content: %.*s\n", (int)t->end - t->start, js + t->start);
+
+    bool match;
+    ERR_CHECK(json_obj_match_string(&jctx, "type", "DEVICE_STATE_CHANGED", &match));
+    if (match) {
+        spotify_evt.event = DEVICE_STATE_CHANGED;
+        return spotify_evt;
     }
+    ERR_CHECK(json_obj_match_string(&jctx, "type", "PLAYER_STATE_CHANGED", &match));
+    if (match) {
+        spotify_evt.event = PLAYER_STATE_CHANGED;
+        ERR_CHECK(json_obj_get_object(&jctx, "event"));
+        ERR_CHECK(json_obj_get_object(&jctx, "state"));
+        ERR_CHECK(json_obj_get_object(&jctx, "item"));
 
-    jsmntok_t* value = object_get_member(js, tokens, "name");
-    assert(value && "key \"name\" missing");
-    playlist_item->name = jsmn_obj_dup(js, value);
-    assert(playlist_item->name && "jsmn_obj_dup() failed. Error allocating memory");
+        // TODO: buscar el string del id, con su longitud, sin duplicar,
+        // luego comparar con el ya existente, si cambio, se actualiza el
+        // track con este
 
-    value = object_get_member(js, tokens, "uri");
-    assert(value && "key \"uri\" missing");
-    playlist_item->uri = jsmn_obj_dup(js, value);
-    assert(playlist_item->uri && "jsmn_obj_dup() failed. Error allocating memory");
+        return spotify_evt;
+    }
+    // unknow event
+    spotify_evt.event = UNKNOW;
+    return spotify_evt;
 }
 
 /* Private functions ---------------------------------------------------------*/
-static void onDevicePlaying(const char* js, jsmntok_t* root, void* obj)
+/* static void onDevicePlaying(const char* js)
 {
     TrackInfo* track = (TrackInfo*)obj;
 
@@ -157,7 +138,7 @@ static void onDevicePlaying(const char* js, jsmntok_t* root, void* obj)
     ESP_LOGD(TAG, "Device id: %s, name: %s", track->device.id, track->device.name);
 }
 
-static void onTrackName(const char* js, jsmntok_t* root, void* obj)
+static void onTrackName(const char* js)
 {
     TrackInfo* track = (TrackInfo*)obj;
 
@@ -173,7 +154,7 @@ static void onTrackName(const char* js, jsmntok_t* root, void* obj)
     ESP_LOGD(TAG, "Track: %s", track->name);
 }
 
-static void onArtistsName(const char* js, jsmntok_t* root, void* obj)
+static void onArtistsName(const char* js)
 {
     TrackInfo* track = (TrackInfo*)obj;
 
@@ -199,7 +180,7 @@ static void onArtistsName(const char* js, jsmntok_t* root, void* obj)
     }
 }
 
-static void onAlbumName(const char* js, jsmntok_t* root, void* obj)
+static void onAlbumName(const char* js)
 {
     TrackInfo* track = (TrackInfo*)obj;
 
@@ -218,7 +199,7 @@ static void onAlbumName(const char* js, jsmntok_t* root, void* obj)
     ESP_LOGD(TAG, "Album: %s", track->album);
 }
 
-static void onTrackIsPlaying(const char* js, jsmntok_t* root, void* obj)
+static void onTrackIsPlaying(const char* js)
 {
     TrackInfo* track = (TrackInfo*)obj;
 
@@ -229,7 +210,7 @@ static void onTrackIsPlaying(const char* js, jsmntok_t* root, void* obj)
     track->isPlaying = type == 't' ? true : false;
 }
 
-static void onTrackTime(const char* js, jsmntok_t* root, void* obj)
+static void onTrackTime(const char* js)
 {
     TrackInfo* track = (TrackInfo*)obj;
 
@@ -247,19 +228,7 @@ static void onTrackTime(const char* js, jsmntok_t* root, void* obj)
     track->duration_ms = natoi(js + value->start, value->end - value->start);
 }
 
-static void onAccessToken(const char* js, jsmntok_t* root, void* obj)
-{
-    AccessToken* token = (AccessToken*)obj;
-
-    jsmntok_t* value = object_get_member(js, root, "access_token");
-    assert(value && "key \"access_token\" missing");
-
-    token->value[7] = '\0'; // don't touch the "Bearer " part
-
-    strncat(token->value, js + value->start, value->end - value->start);
-}
-
-static void onExpiresIn(const char* js, jsmntok_t* root, void* obj)
+static void onExpiresIn(const char* js)
 {
     AccessToken* token = (AccessToken*)obj;
 
@@ -270,84 +239,6 @@ static void onExpiresIn(const char* js, jsmntok_t* root, void* obj)
     token->expiresIn = time(0) + seconds;
 }
 
-void parseConnectionId(const char* js, char** data)
-{
-
-    jsmn_parser jsmn;
-    jsmn_init(&jsmn);
-
-    jsmnerr_t n = jsmn_parse(&jsmn, js, strlen(js), tokens, MAX_TOKENS);
-    if (n < 0) {
-        ESP_LOGE(TAG, "%s", error_str(n));
-        ESP_LOGE(TAG, "%s", js);
-        abort();
-    }
-
-    jsmntok_t* value = object_get_member(js, tokens, "headers");
-
-    if (!value) {
-        *data = NULL;
-        return;
-    }
-
-    value = object_get_member(js, value, "Spotify-Connection-Id");
-    if (!value) {
-        *data = NULL;
-        return;
-    }
-
-    *data = jsmn_obj_dup(js, value);
-}
-
-uint32_t parseWebsocketEvent(const char* js, char** data)
-{
-
-    *data = NULL;
-
-    jsmn_parser jsmn;
-    jsmn_init(&jsmn);
-
-    jsmnerr_t n = jsmn_parse(&jsmn, js, strlen(js), tokens, MAX_TOKENS);
-    if (n < 0) {
-        ESP_LOGE(TAG, "%s", error_str(n));
-        ESP_LOGE(TAG, "%s", js);
-        abort();
-    }
-
-    jsmntok_t* value = object_get_member(js, tokens, "payloads");
-
-    if (!value) {
-        return -1;
-    }
-
-    value = array_get_at(value, 0);
-    assert(value && "array_get_at() failed. Maybe not an array");
-
-    value = object_get_member(js, value, "events");
-
-    if (!value) {
-        return 99;
-    }
-
-    value = array_get_at(value, 0);
-    assert(value && "array_get_at() failed. Maybe not an array");
-
-    value = object_get_member(js, value, "type");
-    assert(value && "key \"type\" missing");
-
-    size_t len = value->end - value->start;
-
-    char* evt = js + value->start;
-
-    if (strncmp(evt, "PLAYER_STATE_CHANGED", len) == 0) {
-        return (1 << 5);
-    } else if (strncmp(evt, "DEVICE_STATE_CHANGED", len) == 0) {
-        return (1 << 4);
-    } else {
-        return 98;
-    }
-}
-
 static inline int natoi(const char* str, short len)
 {
     int ret = 0;
@@ -355,25 +246,7 @@ static inline int natoi(const char* str, short len)
         ret = ret * 10 + (str[i] - '0');
     }
     return ret;
-}
-
-static void parsejson(const char* js, PathCb* callbacks, size_t callbacksSize, void* obj)
-{
-    jsmn_parser jsmn;
-    jsmn_init(&jsmn);
-
-    jsmnerr_t n = jsmn_parse(&jsmn, js, strlen(js), tokens, MAX_TOKENS);
-    if (n < 0) {
-        ESP_LOGE(TAG, "%s", error_str(n));
-        ESP_LOGE(TAG, "%s", js);
-        abort();
-    }
-
-    for (size_t i = 0; i < callbacksSize; i++) {
-        PathCb fn = callbacks[i];
-        fn(js, tokens, obj);
-    }
-}
+} */
 
 /**
  * @brief u8g2 selection list menu uses a string with '\\n' as
