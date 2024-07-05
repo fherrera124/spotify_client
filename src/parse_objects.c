@@ -67,9 +67,10 @@ void parse_connection_id(const char* js, char** data)
     json_parse_end_static(&jctx);
 }
 
-SpotifyClientEvent_t parse_ws_event(const char* js, TrackInfo** track_info)
+SpotifyClientEvent_t parse_ws_event(const char* js, TrackInfo** track)
 {
     // ESP_LOGW(TAG, "%s", js);
+    assert(track && *track);
 
     SpotifyClientEvent_t spotify_evt = { 0 };
 
@@ -80,7 +81,11 @@ SpotifyClientEvent_t parse_ws_event(const char* js, TrackInfo** track_info)
     ERR_CHECK(json_obj_get_array(&jctx, "payloads", &num_elem));
     // TODO: check if the array is greater than one
     ERR_CHECK(json_arr_get_object(&jctx, 0));
-    ERR_CHECK(json_obj_get_array(&jctx, "events", &num_elem));
+    if (json_obj_get_array(&jctx, "events", &num_elem) != OS_SUCCESS) {
+        ESP_LOGW(TAG, "Not an event:\n%s", js);
+        spotify_evt.type = UNKNOW;
+        return spotify_evt;
+    }
     // TODO: check if the array is greater than one
     ERR_CHECK(json_arr_get_object(&jctx, 0));
     // json_tok_t* t = jctx.cur;
@@ -89,24 +94,45 @@ SpotifyClientEvent_t parse_ws_event(const char* js, TrackInfo** track_info)
     bool match;
     ERR_CHECK(json_obj_match_string(&jctx, "type", "DEVICE_STATE_CHANGED", &match));
     if (match) {
-        spotify_evt.event = DEVICE_STATE_CHANGED;
+        spotify_evt.type = DEVICE_STATE_CHANGED;
         return spotify_evt;
     }
     ERR_CHECK(json_obj_match_string(&jctx, "type", "PLAYER_STATE_CHANGED", &match));
     if (match) {
-        spotify_evt.event = PLAYER_STATE_CHANGED;
+        spotify_evt.type = PLAYER_STATE_CHANGED;
         ERR_CHECK(json_obj_get_object(&jctx, "event"));
         ERR_CHECK(json_obj_get_object(&jctx, "state"));
         ERR_CHECK(json_obj_get_object(&jctx, "item"));
-
-        // TODO: buscar el string del id, con su longitud, sin duplicar,
-        // luego comparar con el ya existente, si cambio, se actualiza el
-        // track con este
+        ERR_CHECK(json_obj_match_string(&jctx, "id", (*track)->id, &match));
+        if (match) {
+            spotify_evt.type = SAME_TRACK;
+            // TODO: evaluar que informacion posiblemente cambió
+            // y emitir ese evento en particular
+        } else {
+            spotify_evt.type = NEW_TRACK;
+            spotify_evt.payload = *track;
+            ERR_CHECK(json_obj_get_string(&jctx, "id", (*track)->id, 30));
+            free((*track)->name);
+            ERR_CHECK(json_obj_dup_string(&jctx, "name", &(*track)->name));
+            spotify_free_nodes(&(*track)->artists);
+            ERR_CHECK(json_obj_get_array(&jctx, "artists", &num_elem));
+            for (int i = 0; i < num_elem; i++) {
+                ERR_CHECK(json_arr_get_object(&jctx, i));
+                char * artist_name;
+                ERR_CHECK(json_obj_dup_string(&jctx, "name", &artist_name));
+                assert(spotify_append_item_to_list(&(*track)->artists, artist_name));
+                ERR_CHECK(json_arr_leave_object(&jctx));
+            }
+            ERR_CHECK(json_obj_leave_array(&jctx));
+            free((*track)->album);
+            ERR_CHECK(json_obj_get_object(&jctx, "album"));
+            ERR_CHECK(json_obj_dup_string(&jctx, "name", &(*track)->album));
+        }
 
         return spotify_evt;
     }
     // unknow event
-    spotify_evt.event = UNKNOW;
+    spotify_evt.type = UNKNOW;
     return spotify_evt;
 }
 
@@ -138,67 +164,6 @@ SpotifyClientEvent_t parse_ws_event(const char* js, TrackInfo** track_info)
     ESP_LOGD(TAG, "Device id: %s, name: %s", track->device.id, track->device.name);
 }
 
-static void onTrackName(const char* js)
-{
-    TrackInfo* track = (TrackInfo*)obj;
-
-    jsmntok_t* value = object_get_member(js, root, "item");
-    assert(value && "key \"item\" missing");
-
-    value = object_get_member(js, value, "name");
-    assert(value && "key \"name\" missing");
-
-    track->name = jsmn_obj_dup(js, value);
-    assert(track->name && "Error allocating memory");
-
-    ESP_LOGD(TAG, "Track: %s", track->name);
-}
-
-static void onArtistsName(const char* js)
-{
-    TrackInfo* track = (TrackInfo*)obj;
-
-    jsmntok_t* value = object_get_member(js, root, "item");
-    assert(value && "key \"item\" missing");
-
-    value = object_get_member(js, value, "artists");
-    assert(value && "key \"artists\" missing");
-
-    jsmntok_t* artists = value;
-    for (uint16_t i = 0; i < (artists->size); i++) {
-        value = array_get_at(artists, i);
-        assert(value && "array_get_at() failed. Maybe not an array");
-
-        value = object_get_member(js, value, "name");
-        assert(value && "key \"name\" missing");
-
-        char* artist = jsmn_obj_dup(js, value);
-        assert(artist && "Error allocating memory");
-
-        Node* node = spotify_append_item_to_list(&track->artists, (void*)artist);
-        assert(node && "Error allocating memory for node");
-    }
-}
-
-static void onAlbumName(const char* js)
-{
-    TrackInfo* track = (TrackInfo*)obj;
-
-    jsmntok_t* value = object_get_member(js, root, "item");
-    assert(value && "key \"item\" missing");
-
-    value = object_get_member(js, value, "album");
-    assert(value && "key \"album\" missing");
-
-    value = object_get_member(js, value, "name");
-    assert(value && "key \"name\" missing");
-
-    track->album = jsmn_obj_dup(js, value);
-    assert(track->album && "Error allocating memory");
-
-    ESP_LOGD(TAG, "Album: %s", track->album);
-}
-
 static void onTrackIsPlaying(const char* js)
 {
     TrackInfo* track = (TrackInfo*)obj;
@@ -226,17 +191,6 @@ static void onTrackTime(const char* js)
     assert(value && "key \"duration_ms\" missing");
 
     track->duration_ms = natoi(js + value->start, value->end - value->start);
-}
-
-static void onExpiresIn(const char* js)
-{
-    AccessToken* token = (AccessToken*)obj;
-
-    jsmntok_t* value = object_get_member(js, root, "expires_in");
-    assert(value && "key \"expires_in\" missing");
-
-    int seconds = natoi(js + value->start, value->end - value->start);
-    token->expiresIn = time(0) + seconds;
 }
 
 static inline int natoi(const char* str, short len)

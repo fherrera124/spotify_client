@@ -39,12 +39,12 @@ void app_main(void)
     List* playlists = spotify_user_playlists();
     if (playlists->count > 0) {
         ESP_LOGI(TAG, "User playlists:");
-        Node* playlist_node = playlists->first;
-        while (playlist_node) {
-            PlaylistItem_t* data = playlist_node->data;
+        Node* playlist_n = playlists->first;
+        while (playlist_n) {
+            PlaylistItem_t* data = playlist_n->data;
             ESP_LOGI(TAG, "Playlist name: %s", data->name);
             ESP_LOGI(TAG, "Playlist uri: %s", data->uri);
-            playlist_node = playlist_node->next;
+            playlist_n = playlist_n->next;
         }
         spotify_free_nodes(playlists);
     } else {
@@ -56,12 +56,12 @@ void app_main(void)
     List* available_devices = spotify_available_devices();
     if (available_devices->count > 0) {
         ESP_LOGI(TAG, "Available devices:");
-        Node* device_node = available_devices->first;
-        while (device_node) {
-            DeviceItem_t* data = device_node->data;
+        Node* device_n = available_devices->first;
+        while (device_n) {
+            DeviceItem_t* data = device_n->data;
             ESP_LOGI(TAG, "Device name: %s", data->name);
             ESP_LOGI(TAG, "Device id: %s", data->id);
-            device_node = device_node->next;
+            device_n = device_n->next;
         }
         spotify_free_nodes(available_devices);
     } else {
@@ -74,9 +74,22 @@ void app_main(void)
     SpotifyClientEvent_t event;
     while (1) {
         spotify_wait_event(&event);
-        ESP_LOGI(TAG, "Event type: %d", event.event);
-        //vTaskDelay(pdMS_TO_TICKS(1000));
-        ESP_LOGI(TAG, "Sending event that the event was processed");
+        if (event.type == NEW_TRACK) {
+            ESP_LOGI(TAG, "#");
+            TrackInfo* track = event.payload;
+            ESP_LOGI(TAG, "Track: \"%s\"", track->name);
+            ESP_LOGI(TAG, "Album: \"%s\"", track->album);
+            Node* artist_n = track->artists.first;
+            if (track->artists.count == 1) {
+                ESP_LOGI(TAG, "Artist: \"%s\"", (char*)artist_n->data);
+            } else {
+                ESP_LOGI(TAG, "Artists:");
+                while (artist_n) {
+                    ESP_LOGI(TAG, " \"%s\"", (char*)artist_n->data);
+                    artist_n = artist_n->next;
+                }
+            }
+        }
         spotify_dispatch_event(DATA_PROCESSED_EVENT);
     }
 }

@@ -414,33 +414,12 @@ static void player_task(void* pvParameters)
                 xEventGroupSetBits(event_group, READY_FOR_DATA);
             } else {
                 SpotifyClientEvent_t spotify_evt = parse_ws_event(ws_buffer, &track_info);
-                if (spotify_evt.event == PLAYER_STATE_CHANGED) {
-                    // ESP_LOGW(TAG, "%s", ws_buffer);
-                    // handle_track_fetched(track);
-                }
                 xQueueSend(event_queue, &spotify_evt, portMAX_DELAY);
             }
         } else if (uxBits & DATA_PROCESSED) {
             xEventGroupSetBits(event_group, READY_FOR_DATA);
             // now the ws buff isn't our anymore
         }
-    }
-}
-
-static inline void handle_track_fetched(TrackInfo* track)
-{
-    // parseTrackInfo(ws_buffer, track); DELETED
-
-    if (0 == strcmp(track_info->name, track->name)) {
-        free_track(track);
-    } else {
-        ESP_LOGI(TAG, "Title: %s", track_info->name);
-        Node* node = track_info->artists.first;
-        while (node) {
-            ESP_LOGI(TAG, "Artist: %s", (char*)node->data);
-            node = node->next;
-        }
-        ESP_LOGI(TAG, "Album: %s", track_info->album);
     }
 }
 

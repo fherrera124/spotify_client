@@ -5,7 +5,9 @@ managed_components/
 sdkconfig
 sdkconfig.old
 
-spotify_client.code-workspace
+dependencies.lock
+
+*.code-workspace
 
 # Prerequisites
 *.d

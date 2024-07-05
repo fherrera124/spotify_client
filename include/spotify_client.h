@@ -8,6 +8,8 @@
 /* Exported types ------------------------------------------------------------*/
 typedef enum {
     PLAYER_STATE_CHANGED,
+    SAME_TRACK, // for testing
+    NEW_TRACK, // for testing
     DEVICE_STATE_CHANGED,
     ACTIVE_DEVICES_FOUND,
     NO_ACTIVE_DEVICES,
@@ -35,7 +37,7 @@ typedef struct
 
 typedef struct
 {
-    char*  id;
+    char  id[30];
     char*  name;
     List   artists;
     char*  album;
@@ -46,7 +48,7 @@ typedef struct
 } TrackInfo;
 
 typedef struct {
-    Event_t event;
+    Event_t type;
     void*   payload;
 } SpotifyClientEvent_t;
 
