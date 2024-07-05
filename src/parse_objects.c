@@ -127,6 +127,8 @@ SpotifyClientEvent_t parse_ws_event(const char* js, TrackInfo** track)
             free((*track)->album);
             ERR_CHECK(json_obj_get_object(&jctx, "album"));
             ERR_CHECK(json_obj_dup_string(&jctx, "name", &(*track)->album));
+            ERR_CHECK(json_obj_leave_object(&jctx));
+            //ERR_CHECK(json_obj_get_int(&jctx, "progress_ms", &(*track)->progress_ms));
         }
 
         return spotify_evt;
@@ -191,15 +193,6 @@ static void onTrackTime(const char* js)
     assert(value && "key \"duration_ms\" missing");
 
     track->duration_ms = natoi(js + value->start, value->end - value->start);
-}
-
-static inline int natoi(const char* str, short len)
-{
-    int ret = 0;
-    for (short i = 0; i < len; ++i) {
-        ret = ret * 10 + (str[i] - '0');
-    }
-    return ret;
 } */
 
 /**

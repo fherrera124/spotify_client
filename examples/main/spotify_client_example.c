@@ -73,7 +73,7 @@ void app_main(void)
     spotify_dispatch_event(ENABLE_PLAYER_EVENT);
     SpotifyClientEvent_t event;
     while (1) {
-        spotify_wait_event(&event);
+        spotify_wait_event(&event, portMAX_DELAY);
         if (event.type == NEW_TRACK) {
             ESP_LOGI(TAG, "#");
             TrackInfo* track = event.payload;

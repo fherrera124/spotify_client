@@ -78,7 +78,6 @@ static esp_err_t _http_event_handler(esp_http_client_event_t* evt);
 static void      player_task(void* pvParameters);
 static esp_err_t confirm_ws_session(char* conn_id);
 static void      free_track(TrackInfo* track_info);
-static void      handle_track_fetched(TrackInfo* new_track);
 static esp_err_t http_retries_available(esp_err_t err);
 static void      debug_mem();
 static void      playlists_handler_cb(char* dest, esp_http_client_event_t* evt);
@@ -168,11 +167,11 @@ esp_err_t spotify_dispatch_event(SendEvent_t event)
     return ESP_OK;
 }
 
-void spotify_wait_event(SpotifyClientEvent_t* event)
+BaseType_t spotify_wait_event(SpotifyClientEvent_t* event, TickType_t xTicksToWait)
 {
     // TODO: check first if the player is enabled,
     // if not, send an event of the error
-    xQueueReceive(event_queue, event, portMAX_DELAY);
+    return xQueueReceive(event_queue, event, xTicksToWait);
 
     // maybe we can send the DATA_PROCESSED_EVENT here
 }
@@ -346,6 +345,35 @@ retry:
         goto retry;
     } else {
         return &devices;
+    }
+}
+
+void spotify_clear_track(TrackInfo* track)
+{
+    track->id[0] = 0;
+    free(track->name);
+    free(track->album);
+    track->progress_ms = 0;
+    spotify_free_nodes(&track->artists);
+    free(track->device.id);
+    free(track->device.name);
+    free(track->device.type);
+    strcpy(track->device.volume_percent, "-1");
+}
+
+esp_err_t spotify_clone_track(TrackInfo* dest, const TrackInfo* src)
+{
+    strcpy(dest->id, src->id);
+    dest->name = strdup(src->name);
+    dest->album = strdup(src->album);
+    dest->device.id = strdup(src->device.id);
+    dest->device.type = strdup(src->device.type);
+    strcpy(dest->device.volume_percent, src->device.volume_percent);
+    Node* node = src->artists.first;
+    while (node) {
+        char* artist = strdup((char*)node->data);
+        spotify_append_item_to_list(&dest->artists, (void*)artist);
+        node = node->next;
     }
 }
 
