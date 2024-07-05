@@ -10,7 +10,6 @@
 #include <string.h>
 
 /* Private macro -------------------------------------------------------------*/
-#define TOO_LARGE "{error: \"Message too large for buffer\"}"
 
 /* Private types -------------------------------------------------------------*/
 
@@ -54,14 +53,11 @@ void default_http_handler_cb(char* dest, esp_http_client_event_t* evt)
 void default_ws_handler_cb(void* handler_args, esp_event_base_t base, int32_t event_id, void* event_data)
 {
 
-    handler_args_t* args = (handler_args_t*)handler_args;
-
-    char*              buffer = args->buffer;
-    EventGroupHandle_t event_group = args->event_group;
-
+    handler_args_t*             args = (handler_args_t*)handler_args;
+    char*                       buffer = args->buffer;
+    EventGroupHandle_t          event_group = args->event_group;
     esp_websocket_event_data_t* data = (esp_websocket_event_data_t*)event_data;
-
-    static int lock = 0;
+    static int                  lock = 0;
 
     switch (event_id) {
     case WEBSOCKET_EVENT_CONNECTED:
@@ -92,17 +88,8 @@ void default_ws_handler_cb(void* handler_args, esp_event_base_t base, int32_t ev
                     portMAX_DELAY);
                 lock = 1;
             }
-            // validamos previamente si el total de todo entrara en nuestro buffer
-            if ((data->payload_len) + 1 > MAX_HTTP_BUFFER) {
-                // first fragment of message
-                if (data->payload_offset == 0) {
-                    ESP_LOGE(TAG, TOO_LARGE);
-                    memcpy(buffer, TOO_LARGE, strlen(TOO_LARGE));
-                }
-                break;
-            }
+            assert((data->payload_len) + 1 <= MAX_HTTP_BUFFER);
             memcpy(buffer + data->payload_offset, data->data_ptr, data->data_len);
-            // para saber si ya procesamos todo el mensaje
             if (data->payload_offset + data->data_len == data->payload_len) {
                 ESP_LOGD(TAG, "Complete message received");
                 buffer[data->payload_len] = 0;
