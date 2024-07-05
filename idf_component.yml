@@ -2,7 +2,7 @@
 dependencies:
   ## Required IDF version
   idf: ">=5.0"
-  #json_parser:
-  #  git: https://github.com/fherrera124/json_parser
-  espressif/json_parser: "^1.0.3"
+  # espressif/json_parser: "^1.0.3"
+  json_parser:
+    path: "./components/json_parser"
   espressif/esp_websocket_client: "=1.2.3"
