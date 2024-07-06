@@ -72,15 +72,18 @@ void app_main(void)
     // enable the player and wait for events
     spotify_dispatch_event(ENABLE_PLAYER_EVENT);
     SpotifyClientEvent_t event;
+    TrackInfo            track = { .artists.type = STRING_LIST };
+    assert(track.name = calloc(1, 1));
     while (1) {
         spotify_wait_event(&event, portMAX_DELAY);
         if (event.type == NEW_TRACK) {
             ESP_LOGI(TAG, "#");
-            TrackInfo* track = event.payload;
-            ESP_LOGI(TAG, "Track: \"%s\"", track->name);
-            ESP_LOGI(TAG, "Album: \"%s\"", track->album);
-            Node* artist_n = track->artists.first;
-            if (track->artists.count == 1) {
+            spotify_clear_track(&track);
+            spotify_clone_track(&track, (TrackInfo*)event.payload);
+            ESP_LOGI(TAG, "Track: \"%s\"", track.name);
+            ESP_LOGI(TAG, "Album: \"%s\"", track.album);
+            Node* artist_n = track.artists.first;
+            if (track.artists.count == 1) {
                 ESP_LOGI(TAG, "Artist: \"%s\"", (char*)artist_n->data);
             } else {
                 ESP_LOGI(TAG, "Artists:");
@@ -88,6 +91,20 @@ void app_main(void)
                     ESP_LOGI(TAG, " \"%s\"", (char*)artist_n->data);
                     artist_n = artist_n->next;
                 }
+            }
+        } else if (event.type == SAME_TRACK) {
+            TrackInfo* track_updated = event.payload;
+            if (track.isPlaying != track_updated->isPlaying) {
+                track.isPlaying = track_updated->isPlaying;
+                if (track.isPlaying) {
+                    ESP_LOGW(TAG, "Unpaused");
+                } else {
+                    ESP_LOGW(TAG, "Paused");
+                }
+            }
+            if (track_updated->progress_ms != track.progress_ms) {
+                track.progress_ms = track_updated->progress_ms;
+                ESP_LOGW(TAG, "progress: %lld", track.progress_ms);
             }
         }
         spotify_dispatch_event(DATA_PROCESSED_EVENT);

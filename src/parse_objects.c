@@ -7,7 +7,7 @@
 #include <string.h>
 
 /* Private macro -------------------------------------------------------------*/
-#define MAX_TOKENS 500
+#define MAX_TOKENS 1000
 
 // early check of unrecoverable error
 #define ERR_CHECK(x) ESP_ERROR_CHECK(x)
@@ -67,7 +67,7 @@ void parse_connection_id(const char* js, char** data)
     json_parse_end_static(&jctx);
 }
 
-SpotifyClientEvent_t parse_ws_event(const char* js, TrackInfo** track)
+SpotifyClientEvent_t parse_track(const char* js, TrackInfo** track, int initial_state)
 {
     // ESP_LOGW(TAG, "%s", js);
     assert(track && *track);
@@ -76,6 +76,12 @@ SpotifyClientEvent_t parse_ws_event(const char* js, TrackInfo** track)
 
     jparse_ctx_t jctx;
     ERR_CHECK(json_parse_start_static(&jctx, js, strlen(js), tokens, MAX_TOKENS));
+
+    if (initial_state) {
+        // this function was called for the purpose of initial state,
+        // for that a request via http was made, not really an event from ws
+        goto initial_state;
+    }
 
     int num_elem;
     ERR_CHECK(json_obj_get_array(&jctx, "payloads", &num_elem));
@@ -99,36 +105,48 @@ SpotifyClientEvent_t parse_ws_event(const char* js, TrackInfo** track)
     }
     ERR_CHECK(json_obj_match_string(&jctx, "type", "PLAYER_STATE_CHANGED", &match));
     if (match) {
-        spotify_evt.type = PLAYER_STATE_CHANGED;
         ERR_CHECK(json_obj_get_object(&jctx, "event"));
         ERR_CHECK(json_obj_get_object(&jctx, "state"));
+    initial_state:
+        spotify_evt.type = PLAYER_STATE_CHANGED;
         ERR_CHECK(json_obj_get_object(&jctx, "item"));
         ERR_CHECK(json_obj_match_string(&jctx, "id", (*track)->id, &match));
         if (match) {
+            ERR_CHECK(json_obj_leave_object(&jctx));
             spotify_evt.type = SAME_TRACK;
-            // TODO: evaluar que informacion posiblemente cambió
-            // y emitir ese evento en particular
+            spotify_evt.payload = *track;
+            int64_t progress;
+            ERR_CHECK(json_obj_get_int64(&jctx, "progress_ms", &progress));
+            if (progress != (*track)->progress_ms) {
+                (*track)->progress_ms = progress;
+            }
+            bool is_playing;
+            ERR_CHECK(json_obj_get_bool(&jctx, "is_playing", &is_playing));
+            if (is_playing != (*track)->isPlaying) {
+                (*track)->isPlaying = is_playing;
+            }
+            // volume...
         } else {
             spotify_evt.type = NEW_TRACK;
             spotify_evt.payload = *track;
+            spotify_clear_track(*track);
             ERR_CHECK(json_obj_get_string(&jctx, "id", (*track)->id, 30));
-            free((*track)->name);
             ERR_CHECK(json_obj_dup_string(&jctx, "name", &(*track)->name));
-            spotify_free_nodes(&(*track)->artists);
             ERR_CHECK(json_obj_get_array(&jctx, "artists", &num_elem));
             for (int i = 0; i < num_elem; i++) {
                 ERR_CHECK(json_arr_get_object(&jctx, i));
-                char * artist_name;
+                char* artist_name;
                 ERR_CHECK(json_obj_dup_string(&jctx, "name", &artist_name));
                 assert(spotify_append_item_to_list(&(*track)->artists, artist_name));
                 ERR_CHECK(json_arr_leave_object(&jctx));
             }
             ERR_CHECK(json_obj_leave_array(&jctx));
-            free((*track)->album);
             ERR_CHECK(json_obj_get_object(&jctx, "album"));
             ERR_CHECK(json_obj_dup_string(&jctx, "name", &(*track)->album));
             ERR_CHECK(json_obj_leave_object(&jctx));
-            //ERR_CHECK(json_obj_get_int(&jctx, "progress_ms", &(*track)->progress_ms));
+            ERR_CHECK(json_obj_leave_object(&jctx));
+            ERR_CHECK(json_obj_get_int64(&jctx, "progress_ms", &(*track)->progress_ms));
+            ERR_CHECK(json_obj_get_bool(&jctx, "is_playing", &(*track)->isPlaying));
         }
 
         return spotify_evt;
@@ -164,35 +182,6 @@ SpotifyClientEvent_t parse_ws_event(const char* js, TrackInfo** track)
     snprintf(track->device.volume_percent, 4, "%s\n", js + value->start);
 
     ESP_LOGD(TAG, "Device id: %s, name: %s", track->device.id, track->device.name);
-}
-
-static void onTrackIsPlaying(const char* js)
-{
-    TrackInfo* track = (TrackInfo*)obj;
-
-    jsmntok_t* value = object_get_member(js, root, "is_playing");
-    assert(value && "key \"is_playing\" missing");
-
-    char type = (js + (value->start))[0];
-    track->isPlaying = type == 't' ? true : false;
-}
-
-static void onTrackTime(const char* js)
-{
-    TrackInfo* track = (TrackInfo*)obj;
-
-    jsmntok_t* value = object_get_member(js, root, "progress_ms");
-    assert(value && "key \"progress_ms\" missing");
-
-    track->progress_ms = natoi(js + value->start, value->end - value->start);
-
-    value = object_get_member(js, root, "item");
-    assert(value && "key \"item\" missing");
-
-    value = object_get_member(js, value, "duration_ms");
-    assert(value && "key \"duration_ms\" missing");
-
-    track->duration_ms = natoi(js + value->start, value->end - value->start);
 } */
 
 /**

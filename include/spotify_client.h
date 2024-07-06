@@ -17,6 +17,7 @@ typedef enum {
     VOLUME_CHANGED,
     TRANSFERRED_OK,
     TRANSFERRED_FAIL,
+    NO_PLAYER_ACTIVE,
     UNKNOW
 } Event_t;
 
@@ -43,7 +44,7 @@ typedef struct
     char*  album;
     time_t duration_ms;
     time_t progress_ms;
-    bool   isPlaying : 1;
+    bool   isPlaying;
     Device device;
 } TrackInfo;
 

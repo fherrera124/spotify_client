@@ -32,11 +32,6 @@
     esp_http_client_set_header(http_client.handle, "Authorization", AUTH); \
     esp_http_client_set_header(http_client.handle, "Content-Type", TYPE)
 
-/* DRY macros */
-#define CALLOC(var, size)  \
-    var = calloc(1, size); \
-    assert((var) && "Error allocating memory")
-
 /* Private types -------------------------------------------------------------*/
 typedef void (*handler_cb_t)(char*, esp_http_client_event_t*);
 
@@ -61,7 +56,7 @@ esp_websocket_client_handle_t ws_client_handle;
 static QueueHandle_t          event_queue;
 List                          playlists = { .type = PLAYLIST_LIST };
 List                          devices = { .type = DEVICE_LIST };
-TrackInfo*                    track_info = &(TrackInfo) { 0 }; /* pointer to an unnamed object, constructed in place
+TrackInfo*                    track_info = &(TrackInfo) { .artists.type = STRING_LIST }; /* pointer to an unnamed object, constructed in place
 by the the COMPOUND LITERAL expression "(TrackInfo) { 0 }". NOTE: Although the syntax of a compound
 literal is similar to a cast, the important distinction is that a cast is a non-lvalue expression
 while a compound literal is an lvalue */
@@ -99,8 +94,7 @@ esp_err_t spotify_client_init(UBaseType_t priority)
         .ping_interval_sec = 30,
     };
 
-    CALLOC(track_info->name, 1);
-    track_info->artists.type = STRING_LIST;
+    assert(track_info->name = calloc(1, 1));
 
     http_client.handle = esp_http_client_init(&http_cfg);
     if (!http_client.handle) {
@@ -353,6 +347,7 @@ void spotify_clear_track(TrackInfo* track)
     track->id[0] = 0;
     free(track->name);
     free(track->album);
+    track->isPlaying = false;
     track->progress_ms = 0;
     spotify_free_nodes(&track->artists);
     free(track->device.id);
@@ -366,15 +361,18 @@ esp_err_t spotify_clone_track(TrackInfo* dest, const TrackInfo* src)
     strcpy(dest->id, src->id);
     dest->name = strdup(src->name);
     dest->album = strdup(src->album);
-    dest->device.id = strdup(src->device.id);
+    dest->isPlaying = src->isPlaying;
+    dest->progress_ms = src->progress_ms;
+    /* dest->device.id = strdup(src->device.id);
     dest->device.type = strdup(src->device.type);
-    strcpy(dest->device.volume_percent, src->device.volume_percent);
+    strcpy(dest->device.volume_percent, src->device.volume_percent); */
     Node* node = src->artists.first;
     while (node) {
         char* artist = strdup((char*)node->data);
-        spotify_append_item_to_list(&dest->artists, (void*)artist);
+        assert(spotify_append_item_to_list(&dest->artists, (void*)artist));
         node = node->next;
     }
+    return ESP_OK;
 }
 
 /* Private functions ---------------------------------------------------------*/
@@ -384,8 +382,10 @@ static void player_task(void* pvParameters)
         .buffer = ws_buffer,
         .event_group = event_group
     };
-    int         first_msg = 1;
-    EventBits_t uxBits;
+    int                  first_msg = 1;
+    int                  enabled = 0;
+    SpotifyClientEvent_t spotify_evt;
+    EventBits_t          uxBits;
     while (1) {
         uxBits = xEventGroupWaitBits(
             event_group,
@@ -395,19 +395,31 @@ static void player_task(void* pvParameters)
             portMAX_DELAY);
 
         if (uxBits & (ENABLE_PLAYER | WS_DISCONNECT_EVENT)) {
+            if (uxBits & ENABLE_PLAYER) {
+                if (enabled) {
+                    ESP_LOGW(TAG, "Already enabled!!");
+                    continue;
+                }
+                enabled = 1;
+            }
             first_msg = 1;
             ESP_ERROR_CHECK(get_access_token());
-            // initial state
+            // if there is a device atached to playback,
+            // instead of wait for an event from ws, we
+            // send a "fake" PLAYER_STATE_CHANGED event
             HttpStatus_Code status_code;
             ESP_ERROR_CHECK(player_cmd(GET_STATE, NULL, &status_code));
             if (status_code == HttpStatus_Ok) {
-                // there is a device atached to playback,
-                // fire as a first event
-                // TODO: send to queue FIRST_EVENT
+                // maybe free track??
+                ACQUIRE_LOCK(http_buf_lock);
+                spotify_evt = parse_track(http_buffer, &track_info, 1);
+                RELEASE_LOCK(http_buf_lock);
+                xQueueSend(event_queue, &spotify_evt, portMAX_DELAY);
             } else if (status_code == 204) {
                 // no device is atached to playback,
                 // fire an event of no device playing
-                // TODO: send to queue NO_PLAYER_ACTIVE_EVENT
+                spotify_evt.type = NO_PLAYER_ACTIVE;
+                xQueueSend(event_queue, &spotify_evt, portMAX_DELAY);
             } else {
                 ESP_LOGE(TAG, "Error trying to get player state. Status code: %d", status_code);
                 // TODO: send error to queue
@@ -426,6 +438,7 @@ static void player_task(void* pvParameters)
                 // TODO: send error to queue
             }
         } else if (uxBits & DISABLE_PLAYER) {
+            enabled = 0;
             esp_websocket_client_close(ws_client_handle, portMAX_DELAY);
         } else if (uxBits & WS_DATA_EVENT) {
 
@@ -441,7 +454,7 @@ static void player_task(void* pvParameters)
                 ESP_ERROR_CHECK(confirm_ws_session(conn_id));
                 xEventGroupSetBits(event_group, READY_FOR_DATA);
             } else {
-                SpotifyClientEvent_t spotify_evt = parse_ws_event(ws_buffer, &track_info);
+                spotify_evt = parse_track(ws_buffer, &track_info, 0);
                 xQueueSend(event_queue, &spotify_evt, portMAX_DELAY);
             }
         } else if (uxBits & DATA_PROCESSED) {
