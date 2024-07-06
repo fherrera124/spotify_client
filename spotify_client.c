@@ -349,6 +349,7 @@ void spotify_clear_track(TrackInfo* track)
     free(track->album);
     track->isPlaying = false;
     track->progress_ms = 0;
+    track->duration_ms = 0;
     spotify_free_nodes(&track->artists);
     free(track->device.id);
     free(track->device.name);
@@ -363,6 +364,7 @@ esp_err_t spotify_clone_track(TrackInfo* dest, const TrackInfo* src)
     dest->album = strdup(src->album);
     dest->isPlaying = src->isPlaying;
     dest->progress_ms = src->progress_ms;
+    dest->duration_ms = src->duration_ms;
     /* dest->device.id = strdup(src->device.id);
     dest->device.type = strdup(src->device.type);
     strcpy(dest->device.volume_percent, src->device.volume_percent); */

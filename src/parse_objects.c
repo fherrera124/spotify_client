@@ -132,6 +132,7 @@ SpotifyClientEvent_t parse_track(const char* js, TrackInfo** track, int initial_
             spotify_clear_track(*track);
             ERR_CHECK(json_obj_get_string(&jctx, "id", (*track)->id, 30));
             ERR_CHECK(json_obj_dup_string(&jctx, "name", &(*track)->name));
+            ERR_CHECK(json_obj_get_int64(&jctx, "duration_ms", &(*track)->duration_ms));
             ERR_CHECK(json_obj_get_array(&jctx, "artists", &num_elem));
             for (int i = 0; i < num_elem; i++) {
                 ERR_CHECK(json_arr_get_object(&jctx, i));
