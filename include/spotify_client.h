@@ -25,6 +25,10 @@ typedef enum {
     ENABLE_PLAYER_EVENT,
     DISABLE_PLAYER_EVENT,
     DATA_PROCESSED_EVENT,
+    DO_PAUSE,
+    DO_PLAY,
+    DO_PREVIOUS,
+    DO_NEXT,
 } SendEvent_t;
 
 typedef struct
@@ -53,21 +57,11 @@ typedef struct {
     void*   payload;
 } SpotifyClientEvent_t;
 
-typedef enum {
-    PAUSE = 1,
-    PLAY,
-    PREVIOUS,
-    NEXT,
-    CHANGE_VOLUME,
-    GET_STATE
-} PlayerCommand_t;
-
 /* Exported functions prototypes ---------------------------------------------*/
 esp_err_t  spotify_client_init(UBaseType_t priority);
 esp_err_t  spotify_dispatch_event(SendEvent_t event);
 BaseType_t spotify_wait_event(SpotifyClientEvent_t* event, TickType_t xTicksToWait);
-esp_err_t  player_cmd(PlayerCommand_t cmd, void* payload, HttpStatus_Code* status_code);
-esp_err_t  http_play_context_uri(const char* uri, HttpStatus_Code* status_code);
+esp_err_t  spotify_play_context_uri(const char* uri, HttpStatus_Code* status_code);
 List*      spotify_user_playlists();
 List*      spotify_available_devices();
 void       spotify_clear_track(TrackInfo* track);
