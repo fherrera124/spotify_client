@@ -67,19 +67,19 @@ void parse_connection_id(const char* js, char** data)
     json_parse_end_static(&jctx);
 }
 
-SpotifyClientEvent_t parse_track(const char* js, TrackInfo** track, int initial_state)
+SpotifyEvent_t parse_track(const char* js, TrackInfo** track, int initial_state)
 {
     // ESP_LOGW(TAG, "%s", js);
     assert(track && *track);
 
-    SpotifyClientEvent_t spotify_evt = { 0 };
+    SpotifyEvent_t spotify_evt = { .type = UNKNOW };
 
     jparse_ctx_t jctx;
     ERR_CHECK(json_parse_start_static(&jctx, js, strlen(js), tokens, MAX_TOKENS));
 
     if (initial_state) {
         // this function was called for the purpose of initial state,
-        // for that a request via http was made, not really an event from ws
+        // that is, a request via http was made, not really an event from ws
         goto initial_state;
     }
 
@@ -108,7 +108,6 @@ SpotifyClientEvent_t parse_track(const char* js, TrackInfo** track, int initial_
         ERR_CHECK(json_obj_get_object(&jctx, "event"));
         ERR_CHECK(json_obj_get_object(&jctx, "state"));
     initial_state:
-        spotify_evt.type = PLAYER_STATE_CHANGED;
         ERR_CHECK(json_obj_get_object(&jctx, "item"));
         ERR_CHECK(json_obj_match_string(&jctx, "id", (*track)->id, &match));
         if (match) {
