@@ -1,9 +1,10 @@
 version: "1.0.3"
 description: This is a simple, light weight JSON parser built on top of jsmn
 url: https://github.com/espressif/json_parser
+repository: https://github.com/fherrera124/spotify_client.git
 dependencies:
   jsmn:
     version: "~1.1"
     rules:
       - if: "idf_version >=5.0"
-    override_path: "../jsmn/"
+    override_path: "../components/jsmn/"
