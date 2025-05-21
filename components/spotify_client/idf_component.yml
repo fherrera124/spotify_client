@@ -3,9 +3,10 @@ description: Spotify client for ESP-IDF
 url: https://github.com/fherrera124/spotify_client/tree/main/components/spotify_client
 repository: https://github.com/fherrera124/spotify_client.git
 repository_info:
-  path: "components/json_parser"
+  path: "components/spotify_client"
 dependencies:
   idf: '>=5.0'
   espressif/esp_websocket_client: ^1.4.0
   json_parser:
-    override-path: '../json_parser'
+    git: https://github.com/fherrera124/spotify_client.git
+    path: 'components/json_parser'

@@ -15,6 +15,7 @@
 /* Private types -------------------------------------------------------------*/
 
 /* Private function prototypes -----------------------------------------------*/
+int json_obj_match_string(jparse_ctx_t* jctx, const char* name, const char* str, bool* val);
 
 /* Locally scoped variables --------------------------------------------------*/
 static const char* TAG = "PARSE_OBJECT";
@@ -209,63 +210,17 @@ SpotifyEvent_t parse_track(const char* js, TrackInfo** track, int initial_state)
 }
 
 /* Private functions ---------------------------------------------------------*/
-/* static void onDevicePlaying(const char* js)
+static int json_obj_match_string(jparse_ctx_t* jctx, const char* name, const char* str, bool* val)
 {
-    TrackInfo* track = (TrackInfo*)obj;
-
-    jsmntok_t* device = object_get_member(js, root, "device");
-    assert(device && "key \"device\" missing");
-
-    jsmntok_t* value = object_get_member(js, device, "id");
-    assert(value && "key \"id\" missing");
-
-    track->device.id = jsmn_obj_dup(js, value);
-    assert(track->device.id && "Error allocating memory");
-
-    value = object_get_member(js, device, "name");
-    assert(value && "key \"name\" missing");
-
-    track->device.name = jsmn_obj_dup(js, value);
-    assert(track->device.name && "Error allocating memory");
-
-    value = object_get_member(js, device, "volume_percent");
-    assert(value && "key \"volume_percent\" missing");
-
-    snprintf(track->device.volume_percent, 4, "%s\n", js + value->start);
-
-    ESP_LOGD(TAG, "Device id: %s, name: %s", track->device.id, track->device.name);
-} */
-
-/**
- * @brief u8g2 selection list menu uses a string with '\\n' as
- * item separator. For example: 'item1\\nitem2\\ngo to Menu\\nEtc...'.
- * This function build that string with each playlist name.
- *
- */
-/* esp_err_t static str_append(jsmntok_t* obj, const char* buf, char** str)
-{
-    if (*str == NULL) {
-        *str = jsmn_obj_dup(buf, obj);
-        return (*str == NULL) ? ESP_ERR_NO_MEM : ESP_OK;
+    json_tok_t* tok = json_obj_get_val_tok(jctx, name, JSMN_STRING);
+    if (!tok) {
+        return -OS_FAIL;
     }
 
-    uint16_t obj_len = obj->end - obj->start;
-    uint16_t str_len = strlen(*str);
+    const char *js = jctx->js;
+    *val = ((strncmp(js + tok->start, str, strlen(str)) == 0)
+            && (strlen(str) == (size_t) (tok->end - tok->start)));
 
-    char* r = realloc(*str, str_len + obj_len + 2);
-    if (r == NULL)
-        return ESP_ERR_NO_MEM;
+    return OS_SUCCESS;
+}
 
-    *str = r;
-
-    (*str)[str_len++] = '\n';
-
-    for (uint16_t i = 0; i < obj_len; i++) {
-        (*str)[i + str_len] = *(buf + obj->start + i);
-    }
-    (*str)[str_len + obj_len] = '\0';
-
-    ESP_LOGI(TAG, "str len: %d", strlen(*str));
-
-    return ESP_OK;
-} */
