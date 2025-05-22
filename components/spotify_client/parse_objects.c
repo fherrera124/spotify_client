@@ -209,5 +209,3 @@ SpotifyEvent_t parse_track(const char* js, TrackInfo** track, int initial_state)
 }
 
 /* Private functions ---------------------------------------------------------*/
-
-
