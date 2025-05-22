@@ -15,7 +15,6 @@
 /* Private types -------------------------------------------------------------*/
 
 /* Private function prototypes -----------------------------------------------*/
-int json_obj_match_string(jparse_ctx_t* jctx, const char* name, const char* str, bool* val);
 
 /* Locally scoped variables --------------------------------------------------*/
 static const char* TAG = "PARSE_OBJECT";
@@ -210,17 +209,5 @@ SpotifyEvent_t parse_track(const char* js, TrackInfo** track, int initial_state)
 }
 
 /* Private functions ---------------------------------------------------------*/
-static int json_obj_match_string(jparse_ctx_t* jctx, const char* name, const char* str, bool* val)
-{
-    json_tok_t* tok = json_obj_get_val_tok(jctx, name, JSMN_STRING);
-    if (!tok) {
-        return -OS_FAIL;
-    }
 
-    const char *js = jctx->js;
-    *val = ((strncmp(js + tok->start, str, strlen(str)) == 0)
-            && (strlen(str) == (size_t) (tok->end - tok->start)));
-
-    return OS_SUCCESS;
-}
 
