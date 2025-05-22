@@ -9,4 +9,5 @@ dependencies:
     version: "~1.1"
     rules:
       - if: "idf_version >=5.0"
-    path: "../jsmn/"
+    git: "https://github.com/fherrera124/spotify_client.git"
+    path: "components/jsmn"
